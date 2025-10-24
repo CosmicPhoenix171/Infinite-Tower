@@ -49,4 +49,4 @@ infinite-tower-engine
 Contributions are welcome! Please submit a pull request or open an issue for any suggestions or improvements.
 
 ## License
-This project is licensed under the MIT License. See the LICENSE file for more details.
+This project is proprietary software with all rights reserved. Unauthorized use, copying, modification, or distribution is strictly prohibited. See the LICENSE file for complete terms and conditions.

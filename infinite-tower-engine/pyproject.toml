@@ -2,8 +2,8 @@
 name = "infinite-tower-engine"
 version = "0.1.0"
 description = "A Pygame-based action looter game with infinite floors."
-authors = ["Your Name <your.email@example.com>"]
-license = "MIT"
+authors = ["CosmicPhoenix171"]
+license = "Proprietary"
 
 [tool.poetry.dependencies]
 python = "^3.8"

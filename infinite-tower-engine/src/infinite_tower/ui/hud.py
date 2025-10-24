@@ -1,3 +1,6 @@
+import pygame
+
+
 class HUD:
     def __init__(self, screen, player):
         self.screen = screen
