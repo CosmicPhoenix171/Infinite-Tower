@@ -1,0 +1,52 @@
+# Infinite Tower Engine
+
+## Overview
+Infinite Tower Engine is a Pygame-based action looter game that features an infinite number of floors, each procedurally generated to provide a unique gameplay experience. Players will navigate through various floors, battling enemies, collecting loot, and upgrading their characters.
+
+## Features
+- **Procedural Floor Generation**: Each floor is generated based on a seed derived from the player's name, ensuring a unique experience every time.
+- **Dynamic Combat System**: Engage in fast-paced combat with various enemies, utilizing a robust combat system.
+- **Loot Collection**: Discover and collect a variety of loot items, each with unique properties and rarity.
+- **Player Progression**: Upgrade your character's abilities and equipment as you progress through the infinite tower.
+
+## Installation
+1. Clone the repository:
+   ```
+   git clone <repository-url>
+   ```
+2. Navigate to the project directory:
+   ```
+   cd infinite-tower-engine
+   ```
+3. Install the required dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
+
+## Usage
+To start the game, run the following command:
+```
+python src/infinite_tower/main.py
+```
+
+## Directory Structure
+```
+infinite-tower-engine
+├── src
+│   ├── infinite_tower          # Main game package
+│   ├── scripts                 # Scripts for data generation
+├── tests                       # Unit tests for the game
+├── assets                      # Game assets (sprites, sounds, fonts)
+├── docs                        # Documentation files
+├── .gitignore                  # Git ignore file
+├── pyproject.toml              # Project metadata
+├── requirements.txt            # Required Python packages
+├── README.md                   # Project overview
+└── LICENSE                     # Licensing information
+```
+
+## Contributing
+Contributions are welcome! Please submit a pull request or open an issue for any suggestions or improvements.
+
+## License
+This project is licensed under the MIT License. See the LICENSE file for more details.
