@@ -462,7 +462,10 @@ frameborder="1"
                 cv.focus({preventScroll:true});
                 // Prevent browser focus traversal on Tab so event reaches pygame
                 window.addEventListener('keydown', (e) => {
-                    if (e.key === 'Tab') e.preventDefault();
+                    if (e.key === 'Tab') {
+                        e.preventDefault();
+                        try { cv.focus({preventScroll:true}); } catch(_){}
+                    }
                 }, {capture:true});
                 // Also refocus when clicking inside the page
                 document.addEventListener('click', () => { try { cv.focus({preventScroll:true}); } catch(_){} }, true);

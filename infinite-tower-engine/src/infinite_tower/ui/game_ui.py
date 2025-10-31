@@ -604,16 +604,22 @@ class GameUI:
 
     # New: Build/version label (bottom-left)
     def _draw_build_version(self):
-        """Render the engine/game version at the bottom-left corner."""
-        # Compose version string
+        """Render the engine/game version at the bottom-left corner with high contrast."""
         version_text = f"v{ENGINE_VERSION}"
-        # Slight shadow for readability
-        text_surface = self.font_small.render(version_text, True, self.COLORS['text_gray'])
-        shadow_surface = self.font_small.render(version_text, True, BLACK)
+        # Use a brighter color to ensure visibility on dark backgrounds
+        color = self.COLORS.get('text_yellow', (248, 224, 64))
+        text_surface = self.font_medium.render(version_text, True, color)
+        shadow_surface = self.font_medium.render(version_text, True, BLACK)
         x = self.ui_margin
-        # Place just above bottom margin, leaving a couple pixels from the very bottom
-        y = self.height - self.ui_margin - text_surface.get_height()
-        # Shadow
+        y = self.height - self.ui_margin - text_surface.get_height() - int(4 * self.scale)
+        # Optional subtle background panel for extra contrast
+        pad_x = int(6 * self.scale)
+        pad_y = int(4 * self.scale)
+        bg_rect = pygame.Rect(x - pad_x, y - pad_y, text_surface.get_width() + pad_x * 2, text_surface.get_height() + pad_y * 2)
+        panel = pygame.Surface((bg_rect.width, bg_rect.height), pygame.SRCALPHA)
+        panel.fill((*self.COLORS['bg_panel'], 180))
+        pygame.draw.rect(panel, self.COLORS['frame_border'], panel.get_rect(), 1)
+        self.screen.blit(panel, (bg_rect.x, bg_rect.y))
+        # Shadow and text
         self.screen.blit(shadow_surface, (x + 1, y + 1))
-        # Text
         self.screen.blit(text_surface, (x, y))
