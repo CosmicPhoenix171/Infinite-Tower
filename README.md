@@ -2,7 +2,13 @@
 
 A Pygame-based action looter game featuring infinite procedurally generated floors.
 
-## Quick Start
+## 🎮 Play Online Now!
+
+**👉 [Play Infinite Tower in Your Browser](https://cosmicphoenix171.github.io/Infinite-Tower/) 👈**
+
+No installation required! Works on desktop and mobile browsers.
+
+## Quick Start (Local Development)
 
 1. Navigate to the game directory:
    ```bash
@@ -16,7 +22,7 @@ A Pygame-based action looter game featuring infinite procedurally generated floo
 
 3. Run the game:
    ```bash
-   python src/infinite_tower/main.py
+   python main.py
    ```
 
 ## Project Status
