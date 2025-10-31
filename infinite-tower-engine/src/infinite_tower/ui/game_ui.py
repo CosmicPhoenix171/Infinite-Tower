@@ -141,7 +141,7 @@ class GameUI:
         
         self._draw_floor_info()
         self._draw_experience_bar()
-    self._draw_build_version()
+        self._draw_build_version()
         self._draw_damage_numbers()
         self._draw_notifications()
         

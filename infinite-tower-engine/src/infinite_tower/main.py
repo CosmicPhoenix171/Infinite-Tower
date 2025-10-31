@@ -54,16 +54,14 @@ def main():
             # Handle events
             game.handle_events()
             
-            # Update game state  
-            game.update()
+            # Update game state with dt
+            dt = clock.tick(config.FRAME_RATE) / 1000.0
+            game.update(dt)
             
             # Render the frame
             if game.screen:
                 game.render(game.screen)
                 pygame.display.flip()
-            
-            # Maintain frame rate
-            clock.tick(config.FRAME_RATE)
             
     except Exception as e:
         logger.error(f"Fatal error: {e}")

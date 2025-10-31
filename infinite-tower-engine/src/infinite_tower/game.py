@@ -5,6 +5,13 @@ from typing import Optional
 from .utils.input_handler import InputHandler
 from .resources.loader import ResourceLoader
 from . import config
+from .entities.player import Player
+from .entities.enemy import Enemy, EnemyType
+from .ui.game_ui import GameUI
+from .ui.inventory import InventoryUI
+from .systems.combat import CombatSystem
+from .systems.physics import Physics
+from .items.loot import LootGenerator
 
 
 class Game:
@@ -31,6 +38,16 @@ class Game:
         
         # Game state
         self.current_state = "menu"  # menu, playing, paused, game_over
+        self.dt: float = 0.0
+        
+        # World/systems (initialized on play)
+        self.player: Optional[Player] = None
+        self.enemies: list[Enemy] = []
+        self.game_ui: Optional[GameUI] = None
+        self.inventory_ui: Optional[InventoryUI] = None
+        self.combat_system: Optional[CombatSystem] = None
+        self.physics: Optional[Physics] = None
+        self.loot_gen: Optional[LootGenerator] = None
         
         # Setup logging
         self.logger = logging.getLogger(__name__)
@@ -50,7 +67,8 @@ class Game:
             except pygame.error as e:
                 self.logger.warning(f"Audio initialization failed: {e}. Continuing without audio.")
             
-            self.screen = pygame.display.set_mode((config.SCREEN_WIDTH, config.SCREEN_HEIGHT))
+            flags = pygame.SCALED | pygame.RESIZABLE
+            self.screen = pygame.display.set_mode((config.SCREEN_WIDTH, config.SCREEN_HEIGHT), flags)
             pygame.display.set_caption(config.TITLE)
             self.logger.info("Pygame initialized successfully")
         except pygame.error as e:
@@ -87,6 +105,10 @@ class Game:
                 self.end()
                 return
             
+            # Inventory overlay consumes input first when visible
+            if self.inventory_ui and self.inventory_ui.handle_input(event):
+                continue
+            
             # Pass event to input handler
             self.input_handler.handle_event(event)
             
@@ -97,14 +119,36 @@ class Game:
                         self.pause()
                     elif self.current_state == "paused":
                         self.resume()
+                elif event.key == pygame.K_e:
+                    if self.game_ui:
+                        self.game_ui.toggle_equipment()
+                elif event.key == pygame.K_TAB or event.key == pygame.K_i:
+                    if self.inventory_ui:
+                        self.inventory_ui.toggle()
+                elif event.key == pygame.K_f:
+                    # Optional fullscreen toggle
+                    try:
+                        pygame.display.toggle_fullscreen()
+                    except Exception:
+                        pass
+            elif event.type == pygame.VIDEORESIZE:
+                # Recreate surface with new size
+                flags = pygame.SCALED | pygame.RESIZABLE
+                self.screen = pygame.display.set_mode((event.w, event.h), flags)
+                # Update UI surfaces
+                if self.game_ui:
+                    self.game_ui.screen = self.screen
+                if self.inventory_ui:
+                    self.inventory_ui.screen = self.screen
 
-    def update(self):
+    def update(self, dt: float = 0.0):
         """Update game state."""
         if not self.is_running:
             return
             
         # Update input handler
         self.input_handler.update()
+        self.dt = dt if dt > 0 else (1.0 / config.FRAME_RATE)
         
         # Update based on current game state
         if self.current_state == "menu":
@@ -120,16 +164,102 @@ class Game:
         """Update menu state."""
         # Simple menu navigation - no complex menu system needed yet
         if self.input_handler.get_key(pygame.K_RETURN):
-            self.current_state = "playing"
+            self._start_play()
             self.logger.info("Transitioning to gameplay")
         elif self.input_handler.get_key(pygame.K_q):
             self.end()
             self.logger.info("Quit from main menu")
 
+    def _start_play(self):
+        """Initialize world, systems, and UI for gameplay."""
+        # Systems
+        self.combat_system = CombatSystem()
+        self.physics = Physics()
+        self.loot_gen = LootGenerator(seed=12345)
+        
+        # Player
+        self.player = Player("Hero", health=100, position=(config.SCREEN_WIDTH // 2, config.SCREEN_HEIGHT // 2))
+        # UI-related attributes
+        self.player.level = 5
+        self.player.exp = 350
+        self.player.max_exp = 500
+        self.player.mana = 75
+        self.player.max_mana = 100
+        self.player.stamina = 100
+        self.player.max_stamina = 100
+        self.player.equipment = []
+        
+        # Starter loot
+        for _ in range(5):
+            item = self.loot_gen.generate_random_item(floor_level=1)
+            self.player.add_to_inventory(item)
+        
+        # Enemies
+        self.enemies = [
+            Enemy("Goblin", health=30, damage=5, speed=2, position=(200, 150), enemy_type=EnemyType.FAST),
+            Enemy("Orc", health=80, damage=12, speed=1, position=(600, 200), enemy_type=EnemyType.TANK),
+            Enemy("Skeleton", health=40, damage=8, speed=2.5, position=(400, 400), enemy_type=EnemyType.RANGER),
+        ]
+        
+        # UI
+        self.game_ui = GameUI(self.screen, self.player)
+        self.game_ui.set_floor(1, "Entrance Hall")
+        self.game_ui.show_equipment = True
+        self.inventory_ui = InventoryUI(self.screen, self.player)
+        self.game_ui.add_notification("Game Started!", self.game_ui.COLORS['text_green'])
+        self.game_ui.add_notification("Welcome to Floor 1", self.game_ui.COLORS['text_yellow'])
+        
+        self.current_state = "playing"
+
     def _update_gameplay(self):
         """Update gameplay state."""
-        # TODO: Update game entities, systems, etc.
-        pass
+        if not (self.player and self.physics and self.combat_system and self.game_ui):
+            return
+        dt = self.dt
+        
+        # Player input and update (freeze movement when inventory open)
+        if not (self.inventory_ui and self.inventory_ui.is_visible):
+            self.player.handle_input(self.input_handler)
+        self.player.update(dt)
+        
+        # Stamina regen/drain
+        if getattr(self.player, 'is_sprinting', False) and getattr(self.player, 'is_moving', False):
+            self.player.stamina = max(0, self.player.stamina - 0.5)
+        else:
+            self.player.stamina = min(self.player.max_stamina, self.player.stamina + 0.3)
+        
+        # Enemies
+        for enemy in self.enemies[:]:
+            if enemy.is_alive():
+                enemy.update(self.player, dt)
+            else:
+                if enemy in self.enemies:
+                    self.enemies.remove(enemy)
+                    self.game_ui.add_notification(f"Defeated {enemy.name}!", self.game_ui.COLORS['text_green'])
+                    self.player.exp += 50
+                    if self.player.exp >= self.player.max_exp:
+                        self.player.level += 1
+                        self.player.exp = 0
+                        self.game_ui.add_notification(f"Level Up! Now Level {self.player.level}", self.game_ui.COLORS['text_yellow'])
+        
+        # Combat - player attacks
+        if getattr(self.player, 'is_attacking', False):
+            attack_rect = self.player.get_attack_rect()
+            for enemy in self.enemies:
+                if self.physics.check_collision(attack_rect, enemy.rect):
+                    result = self.combat_system.perform_attack(self.player, enemy)
+                    self.game_ui.add_damage_number(result.damage, enemy.position[0], enemy.position[1] - 20, self.game_ui.COLORS['text_red'])
+                    if result.was_critical:
+                        self.game_ui.add_notification("Critical Hit!", self.game_ui.COLORS['text_yellow'])
+        
+        # Combat - enemy attacks
+        for enemy in self.enemies:
+            if enemy.is_attacking and self.physics.check_collision(enemy.get_attack_rect(), self.player.rect):
+                result = self.combat_system.perform_attack(enemy, self.player)
+                self.game_ui.add_damage_number(result.damage, self.player.position[0], self.player.position[1] - 20, self.game_ui.COLORS['text_red'])
+                if not self.player.is_alive():
+                    self.game_ui.show_dialog("You have been defeated!", speaker="Game Over")
+                    self.current_state = "game_over"
 
     def _update_pause(self):
         """Update pause state."""
@@ -198,27 +328,37 @@ class Game:
 
     def _render_gameplay(self, screen: pygame.Surface):
         """Render the main gameplay."""
-        # Simple gameplay placeholder
-        screen.fill((20, 20, 40))  # Dark blue background
+        # Background gradient
+        sw, sh = screen.get_size()
+        for y in range(sh):
+            color_val = int(20 + (y / max(1, sh)) * 30)
+            pygame.draw.line(screen, (color_val, color_val // 2, color_val // 3), (0, y), (sw, y))
         
-        font = self.resource_loader.get_font('default')
+        # Floor area
+        floor_rect = pygame.Rect(60, 60, sw - 120, sh - 140)
+        pygame.draw.rect(screen, (40, 35, 30), floor_rect)
+        pygame.draw.rect(screen, (80, 70, 60), floor_rect, 2)
         
-        # Game world placeholder (simple floor representation)
-        pygame.draw.rect(screen, (100, 50, 0), (50, 50, config.SCREEN_WIDTH - 100, config.SCREEN_HEIGHT - 100))  # Floor
-        pygame.draw.rect(screen, (150, 75, 0), (50, 50, config.SCREEN_WIDTH - 100, config.SCREEN_HEIGHT - 100), 3)  # Border
+        # Grid
+        grid_size = 32
+        grid_color = (50, 45, 40)
+        for x in range(floor_rect.left, floor_rect.right, grid_size):
+            pygame.draw.line(screen, grid_color, (x, floor_rect.top), (x, floor_rect.bottom), 1)
+        for y in range(floor_rect.top, floor_rect.bottom, grid_size):
+            pygame.draw.line(screen, grid_color, (floor_rect.left, y), (floor_rect.right, y), 1)
         
-        # Player placeholder (simple rectangle)
-        pygame.draw.rect(screen, config.GREEN, (400, 300, 20, 20))
+        # Entities
+        if self.enemies:
+            for enemy in self.enemies:
+                enemy.draw(screen)
+        if self.player:
+            self.player.draw(screen)
         
-        # UI Elements
-        ui_text = font.render("FLOOR 1", True, config.WHITE)
-        screen.blit(ui_text, (10, 10))
-        
-        health_text = font.render("HEALTH: 100/100", True, config.RED)
-        screen.blit(health_text, (10, 40))
-        
-        controls_text = font.render("Press ESC to pause", True, config.WHITE)
-        screen.blit(controls_text, (10, config.SCREEN_HEIGHT - 30))
+        # UI
+        if self.game_ui:
+            self.game_ui.draw()
+        if self.inventory_ui:
+            self.inventory_ui.draw()
 
     def _render_pause(self, screen: pygame.Surface):
         """Render the pause screen."""

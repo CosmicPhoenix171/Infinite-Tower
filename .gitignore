@@ -24,8 +24,10 @@ Thumbs.db
 
 # Game specific
 infinite-tower-engine/build/web-cache/
+infinite-tower-engine/build/
 infinite-tower-engine/dist/
 infinite-tower-engine/release/
+infinite-tower-engine/.pytest_cache/
 
 # Keep the web build output for GitHub Pages
 !docs/
