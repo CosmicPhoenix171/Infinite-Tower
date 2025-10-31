@@ -25,24 +25,16 @@ Infinite Tower Engine is a Pygame-based action looter game that features an infi
 
 ## Usage
 
-There are two runnable entry points:
+Run the full desktop game (uses the complete engine and game loop):
 
-- Full desktop game (uses the complete engine and game loop):
-   - Run via the convenience launcher:
-      ```
-      python run_desktop_game.py
-      ```
-   - Or directly (equivalent):
-      ```
-      python src/infinite_tower/main.py
-      ```
-
-- Web demo (lightweight demo to test the same shared game code in a browser-friendly loop):
-   - Run locally with Python (windowed, resizable):
-      ```
-      python main.py
-      ```
-   - To build for the web with pygbag and serve from `docs/`, follow WEB_DEPLOY_GUIDE.md.
+- Via the convenience launcher:
+  ```
+  python run_desktop_game.py
+  ```
+- Or directly:
+  ```
+  python src/infinite_tower/main.py
+  ```
 
 ## Directory Structure
 ```
@@ -52,7 +44,7 @@ infinite-tower-engine
 │   ├── scripts                 # Scripts for data generation
 ├── tests                       # Unit tests for the game
 ├── assets                      # Game assets (sprites, sounds, fonts)
-├── docs                        # Documentation files
+├── docs                        # Design/gameplay documentation (desktop)
 ├── .gitignore                  # Git ignore file
 ├── pyproject.toml              # Project metadata
 ├── requirements.txt            # Required Python packages
