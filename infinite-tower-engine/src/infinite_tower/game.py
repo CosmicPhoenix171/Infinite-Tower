@@ -12,6 +12,7 @@ from .ui.inventory import InventoryUI
 from .systems.combat import CombatSystem
 from .systems.physics import Physics
 from .items.loot import LootGenerator
+from . import __version__ as ENGINE_VERSION
 
 
 class Game:
@@ -122,7 +123,7 @@ class Game:
                 elif event.key == pygame.K_e:
                     if self.game_ui:
                         self.game_ui.toggle_equipment()
-                elif event.key == pygame.K_TAB or event.key == pygame.K_i:
+                elif event.key == pygame.K_TAB or event.key == pygame.K_i or event.key == pygame.K_o:
                     if self.inventory_ui:
                         self.inventory_ui.toggle()
                 elif event.key == pygame.K_f:
@@ -135,6 +136,11 @@ class Game:
                     # Dismiss dialog if showing
                     if self.game_ui and getattr(self.game_ui, 'current_dialog', None):
                         self.game_ui.hide_dialog()
+            # Fallback: some browsers may only deliver keyup for Tab
+            elif event.type == pygame.KEYUP:
+                if event.key == pygame.K_TAB:
+                    if self.inventory_ui:
+                        self.inventory_ui.toggle()
             elif event.type == pygame.VIDEORESIZE:
                 # Recreate surface with new size
                 flags = pygame.SCALED | pygame.RESIZABLE
@@ -311,8 +317,8 @@ class Game:
         title_rect = title_text.get_rect(center=(config.SCREEN_WIDTH // 2, 150))
         screen.blit(title_text, title_rect)
         
-        # Subtitle
-        subtitle_text = font.render("Engine v0.1.0", True, (150, 150, 150))
+        # Subtitle (engine version)
+        subtitle_text = font.render(f"Engine v{ENGINE_VERSION}", True, (150, 150, 150))
         subtitle_rect = subtitle_text.get_rect(center=(config.SCREEN_WIDTH // 2, 190))
         screen.blit(subtitle_text, subtitle_rect)
         
@@ -320,11 +326,22 @@ class Game:
         start_text = font.render("Press ENTER to Start Game", True, config.GREEN)
         start_rect = start_text.get_rect(center=(config.SCREEN_WIDTH // 2, 280))
         screen.blit(start_text, start_rect)
-        
+        # Focus hint for web
+        hint_text = font.render("Click the game area to focus. I/Tab/O: Inventory (in game)", True, (180, 180, 180))
+        hint_rect = hint_text.get_rect(center=(config.SCREEN_WIDTH // 2, 320))
+        screen.blit(hint_text, hint_rect)
+
         quit_text = font.render("Press Q to Quit", True, config.RED)
-        quit_rect = quit_text.get_rect(center=(config.SCREEN_WIDTH // 2, 320))
+        quit_rect = quit_text.get_rect(center=(config.SCREEN_WIDTH // 2, 360))
         screen.blit(quit_text, quit_rect)
         
+        # Bottom-left version label
+        ver_font = pygame.font.Font(None, 28)
+        ver_text = ver_font.render(f"v{ENGINE_VERSION}", True, (220, 220, 120))
+        # Simple shadow for readability
+        screen.blit(ver_font.render(f"v{ENGINE_VERSION}", True, config.BLACK), (12, config.SCREEN_HEIGHT - 34))
+        screen.blit(ver_text, (10, config.SCREEN_HEIGHT - 36))
+
         # Copyright notice
         copyright_text = pygame.font.Font(None, 18).render("© 2025 CosmicPhoenix171 - All Rights Reserved", True, (100, 100, 100))
         copyright_rect = copyright_text.get_rect(center=(config.SCREEN_WIDTH // 2, config.SCREEN_HEIGHT - 30))

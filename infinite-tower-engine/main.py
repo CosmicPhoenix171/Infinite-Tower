@@ -19,12 +19,12 @@ import pygame
 # Import Game and config from source or fallback path (for pygbag packaging)
 try:
     from src.infinite_tower.game import Game
-    from src.infinite_tower.config import FRAME_RATE
+    from src.infinite_tower.config import FRAME_RATE, DEBUG_MODE
 except ImportError:
     import sys
     sys.path.insert(0, 'infinite-tower-engine/src')
     from infinite_tower.game import Game
-    from infinite_tower.config import FRAME_RATE
+    from infinite_tower.config import FRAME_RATE, DEBUG_MODE
 
 
 async def main():
@@ -32,6 +32,7 @@ async def main():
     game = Game()
     game.start()
     clock = pygame.time.Clock()
+    frames = 0
     
     # Main loop (async for web)
     while game.is_running:
@@ -44,6 +45,11 @@ async def main():
         if game.screen:
             game.render(game.screen)
             pygame.display.flip()
+        
+        # Lightweight heartbeat for web debugging (first ~3s)
+        frames += 1
+        if DEBUG_MODE and frames % 30 == 0 and frames <= 180:
+            print(f"[web] loop heartbeat: {frames} frames")
         
         # Yield to browser
         await asyncio.sleep(0)

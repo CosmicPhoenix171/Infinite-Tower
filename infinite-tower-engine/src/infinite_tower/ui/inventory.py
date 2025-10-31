@@ -230,7 +230,7 @@ class InventoryUI:
         
         # Instructions
         instructions = [
-            "TAB/I/ESC: Close",
+            "TAB/I/O/ESC: Close",
             "1-5: Switch Category",
             "Left Click: Select",
             "Right Click: Use Item"
