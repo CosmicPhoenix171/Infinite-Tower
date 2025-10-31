@@ -1,0 +1,3 @@
+# Web build dependencies (GitHub Pages / Pygbag)
+pygbag>=0.8.0
+pygame>=2.6.0

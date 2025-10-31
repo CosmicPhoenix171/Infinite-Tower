@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+*.egg-info/
+dist/
+build/web-cache/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Game specific
+infinite-tower-engine/build/web-cache/
+infinite-tower-engine/dist/
+infinite-tower-engine/release/
+
+# Keep the web build output for GitHub Pages
+!docs/

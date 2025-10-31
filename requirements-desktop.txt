@@ -1,0 +1,4 @@
+# Desktop build dependencies (Windows .exe / Steam)
+pygame>=2.6.0
+numpy>=1.23.5
+pyinstaller>=5.0.0
