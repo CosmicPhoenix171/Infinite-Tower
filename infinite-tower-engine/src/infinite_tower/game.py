@@ -131,6 +131,10 @@ class Game:
                         pygame.display.toggle_fullscreen()
                     except Exception:
                         pass
+                elif event.key == pygame.K_RETURN:
+                    # Dismiss dialog if showing
+                    if self.game_ui and getattr(self.game_ui, 'current_dialog', None):
+                        self.game_ui.hide_dialog()
             elif event.type == pygame.VIDEORESIZE:
                 # Recreate surface with new size
                 flags = pygame.SCALED | pygame.RESIZABLE
