@@ -247,7 +247,11 @@ class GameUI:
         slot_spacing = int(6 * self.scale)
         total_width = (self.slot_size * num_slots) + (slot_spacing * (num_slots - 1))
         start_x = (self.width - total_width) // 2
-        start_y = self.height - self.slot_size - self.ui_margin - int(10 * self.scale)
+        # Place quickbar above the experience bar with a consistent gap
+        exp_height = max(4, int(6 * self.scale))
+        exp_bar_y = self.height - self.ui_margin - exp_height
+        gap = int(16 * self.scale)
+        start_y = exp_bar_y - gap - self.slot_size
         
         # Background panel
         panel_rect = pygame.Rect(start_x - int(10 * self.scale), start_y - int(10 * self.scale), 
@@ -284,6 +288,8 @@ class GameUI:
         
         map_rect = pygame.Rect(map_x, map_y, map_size, map_size)
         self._draw_frame(map_rect)
+        # Expose for sibling panels (equipment) to align underneath
+        self._minimap_rect = map_rect.copy()
         
         # Map content area
         content_x = map_x + int(10 * self.scale)
@@ -322,7 +328,11 @@ class GameUI:
         panel_width = int(200 * self.scale)
         panel_height = int(360 * self.scale)
         panel_x = self.width - panel_width - self.ui_margin
-        panel_y = int(160 * self.scale)  # Below minimap
+        # Align directly beneath minimap with a margin; fallback to fixed if minimap not drawn yet
+        if hasattr(self, '_minimap_rect'):
+            panel_y = self._minimap_rect.bottom + self.ui_margin
+        else:
+            panel_y = self.ui_margin + int(180 * self.scale) + self.ui_margin
         
         panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
         self._draw_frame(panel_rect)
@@ -611,7 +621,10 @@ class GameUI:
         text_surface = self.font_medium.render(version_text, True, color)
         shadow_surface = self.font_medium.render(version_text, True, BLACK)
         x = self.ui_margin
-        y = self.height - self.ui_margin - text_surface.get_height() - int(4 * self.scale)
+        # Position above the experience bar to avoid overlap
+        exp_height = max(4, int(6 * self.scale))
+        exp_bar_y = self.height - self.ui_margin - exp_height
+        y = exp_bar_y - text_surface.get_height() - int(6 * self.scale)
         # Optional subtle background panel for extra contrast
         pad_x = int(6 * self.scale)
         pad_y = int(4 * self.scale)

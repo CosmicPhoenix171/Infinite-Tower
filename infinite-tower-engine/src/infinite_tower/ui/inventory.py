@@ -39,17 +39,20 @@ class InventoryUI:
             self.font_tiny = pygame.font.SysFont('arial', 20)
         
         # Layout
-        self.panel_width = 700
-        self.panel_height = 550
+        # Give the panel a bit more room so grid and stats breathe
+        self.panel_width = 840
+        self.panel_height = 560
         self.panel_x = (SCREEN_WIDTH - self.panel_width) // 2
         self.panel_y = (SCREEN_HEIGHT - self.panel_height) // 2
         
         # Grid settings
-        self.slot_size = 64
-        self.slot_padding = 4
+        # Slightly smaller slots with more padding reduces visual clutter
+        self.slot_size = 56
+        self.slot_padding = 8
         self.slots_per_row = 8
-        self.grid_start_x = self.panel_x + 20
-        self.grid_start_y = self.panel_y + 80
+        self.grid_start_x = self.panel_x + 24
+        # Extra top spacing under tabs/title
+        self.grid_start_y = self.panel_y + 110
         
         # Selection
         self.selected_slot = None
@@ -196,8 +199,8 @@ class InventoryUI:
         sw, sh = self.screen.get_size()
         self.panel_x = (sw - self.panel_width) // 2
         self.panel_y = (sh - self.panel_height) // 2
-        self.grid_start_x = self.panel_x + 20
-        self.grid_start_y = self.panel_y + 80
+        self.grid_start_x = self.panel_x + 24
+        self.grid_start_y = self.panel_y + 110
         
         # Semi-transparent background overlay
         overlay = pygame.Surface((sw, sh))
@@ -207,8 +210,8 @@ class InventoryUI:
         
         # Main panel
         panel_rect = pygame.Rect(self.panel_x, self.panel_y, self.panel_width, self.panel_height)
-        pygame.draw.rect(self.screen, (40, 40, 60), panel_rect)
-        pygame.draw.rect(self.screen, WHITE, panel_rect, 3)
+        pygame.draw.rect(self.screen, (38, 40, 56), panel_rect)
+        pygame.draw.rect(self.screen, WHITE, panel_rect, 2)
         
         # Title
         title = self.font_large.render("INVENTORY", True, WHITE)
@@ -221,6 +224,10 @@ class InventoryUI:
         # Item grid
         self._draw_item_grid()
         
+        # Vertical divider between grid and stats
+        divider_x = self.panel_x + self.panel_width - 200
+        pygame.draw.line(self.screen, GRAY, (divider_x, self.panel_y + 90), (divider_x, self.panel_y + self.panel_height - 70), 1)
+
         # Item tooltip (if hovering)
         if self.hovered_slot is not None:
             self._draw_item_tooltip()
@@ -235,18 +242,18 @@ class InventoryUI:
             "Left Click: Select",
             "Right Click: Use Item"
         ]
-        y_offset = self.panel_y + self.panel_height - 80
+        y_offset = self.panel_y + self.panel_height - 70
         for instr in instructions:
-            text = self.font_tiny.render(instr, True, GRAY)
+            text = self.font_tiny.render(instr, True, (160, 160, 180))
             self.screen.blit(text, (self.panel_x + 20, y_offset))
             y_offset += 18
     
     def _draw_category_tabs(self):
         """Draw category filter tabs."""
-        tab_width = 120
+        tab_width = 100
         tab_height = 30
         start_x = self.panel_x + 20
-        y = self.panel_y + 60
+        y = self.panel_y + 70
         
         for i, category in enumerate(self.categories):
             x = start_x + i * (tab_width + 5)
@@ -286,11 +293,11 @@ class InventoryUI:
             if i == self.selected_slot:
                 pygame.draw.rect(self.screen, (100, 100, 150), slot_rect)
             elif i == self.hovered_slot:
-                pygame.draw.rect(self.screen, (80, 80, 100), slot_rect)
+                pygame.draw.rect(self.screen, (76, 78, 96), slot_rect)
             else:
-                pygame.draw.rect(self.screen, (60, 60, 80), slot_rect)
+                pygame.draw.rect(self.screen, (54, 56, 72), slot_rect)
             
-            pygame.draw.rect(self.screen, GRAY, slot_rect, 2)
+            pygame.draw.rect(self.screen, GRAY, slot_rect, 1)
             
             # Draw item if slot has one
             if i < len(filtered_items):
@@ -391,8 +398,13 @@ class InventoryUI:
     
     def _draw_stats_panel(self):
         """Draw player stats summary."""
-        stats_x = self.panel_x + self.panel_width - 180
-        stats_y = self.panel_y + 100
+        stats_panel_width = 180
+        stats_x = self.panel_x + self.panel_width - stats_panel_width + 10
+        stats_y = self.panel_y + 110
+        # Subtle background panel for stats
+        stats_bg = pygame.Rect(stats_x - 12, stats_y - 16, stats_panel_width - 16, 130)
+        pygame.draw.rect(self.screen, (30, 32, 44), stats_bg)
+        pygame.draw.rect(self.screen, GRAY, stats_bg, 1)
         
         # Total items
         total_items = len(self.player.inventory) if hasattr(self.player, 'inventory') else 0
