@@ -14,6 +14,7 @@ try:
     from src.infinite_tower.entities.player import Player
     from src.infinite_tower.entities.enemy import Enemy, EnemyType
     from src.infinite_tower.ui.game_ui import GameUI
+    from src.infinite_tower.ui.inventory import InventoryUI
     from src.infinite_tower.systems.combat import CombatSystem
     from src.infinite_tower.systems.physics import Physics
     from src.infinite_tower.utils.input_handler import InputHandler
@@ -26,6 +27,7 @@ except ImportError:
     from infinite_tower.entities.player import Player
     from infinite_tower.entities.enemy import Enemy, EnemyType
     from infinite_tower.ui.game_ui import GameUI
+    from infinite_tower.ui.inventory import InventoryUI
     from infinite_tower.systems.combat import CombatSystem
     from infinite_tower.systems.physics import Physics
     from infinite_tower.utils.input_handler import InputHandler
@@ -44,7 +46,9 @@ async def main():
     
     # Initialize Pygame
     pygame.init()
-    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+    # Use resizable + scaled so canvas fills browser; 1280x720 starting size
+    flags = pygame.SCALED | pygame.RESIZABLE
+    screen = pygame.display.set_mode((1280, 720), flags)
     pygame.display.set_caption("Infinite Tower - Web Demo")
     clock = pygame.time.Clock()
     
@@ -108,6 +112,7 @@ async def main():
     print("  SHIFT - Sprint")
     print("  SPACE - Attack")
     print("  E - Toggle Equipment")
+    print("  TAB or I - Inventory")
     print("  ENTER - Dismiss Dialog")
     print("  ESC - Quit")
     print("="*60)
@@ -119,6 +124,9 @@ async def main():
     # Game state
     game_state = GameState()
     
+    # Inventory UI (overlay)
+    inventory_ui = InventoryUI(screen, player)
+    
     # Main game loop (async for web)
     while game_state.running:
         dt = clock.tick(FRAME_RATE) / 1000.0
@@ -127,26 +135,39 @@ async def main():
         # Handle events
         events = pygame.event.get()
         for event in events:
+            # First, let inventory overlay consume input if visible
+            if inventory_ui.handle_input(event):
+                continue
             if event.type == pygame.QUIT:
                 game_state.running = False
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     game_state.running = False
+                elif event.key == pygame.K_f:
+                    # Attempt fullscreen toggle (may be limited in browsers)
+                    try:
+                        pygame.display.toggle_fullscreen()
+                    except Exception:
+                        pass
                 elif event.key == pygame.K_e:
                     game_ui.toggle_equipment()
+                elif event.key == pygame.K_TAB or event.key == pygame.K_i:
+                    inventory_ui.toggle()
                 elif event.key == pygame.K_RETURN:
                     game_ui.hide_dialog()
-                elif event.key == pygame.K_t:
-                    game_ui.show_dialog(
-                        "You found a mysterious chest!",
-                        speaker="Narrator"
-                    )
+            elif event.type == pygame.VIDEORESIZE:
+                # Resize canvas to match browser window
+                screen = pygame.display.set_mode((event.w, event.h), flags)
+                # Update UI surfaces that keep a reference
+                game_ui.screen = screen
+                inventory_ui.screen = screen
         
         # Update input
         input_handler.update()
         
-        # Update player
-        player.handle_input(input_handler)
+        # Update player (disable movement input if inventory open)
+        if not inventory_ui.is_visible:
+            player.handle_input(input_handler)
         player.update(dt)
         
         # Update stamina
@@ -194,14 +215,15 @@ async def main():
         game_ui.update(dt)
         
         # Render
-        # Background gradient
-        for y in range(SCREEN_HEIGHT):
-            color_val = int(20 + (y / SCREEN_HEIGHT) * 30)
-            pygame.draw.line(screen, (color_val, color_val // 2, color_val // 3), 
-                           (0, y), (SCREEN_WIDTH, y))
+        # Background gradient (responsive)
+        sw, sh = screen.get_size()
+        for y in range(sh):
+            color_val = int(20 + (y / max(1, sh)) * 30)
+            pygame.draw.line(screen, (color_val, color_val // 2, color_val // 3), (0, y), (sw, y))
         
         # Floor area
-        floor_rect = pygame.Rect(60, 60, SCREEN_WIDTH - 120, SCREEN_HEIGHT - 140)
+        sw, sh = screen.get_size()
+        floor_rect = pygame.Rect(60, 60, sw - 120, sh - 140)
         pygame.draw.rect(screen, (40, 35, 30), floor_rect)
         pygame.draw.rect(screen, (80, 70, 60), floor_rect, 2)
         
@@ -220,6 +242,8 @@ async def main():
         
         # Draw UI
         game_ui.draw()
+        # Draw Inventory overlay last (on top)
+        inventory_ui.draw()
         
         # Update display
         pygame.display.flip()

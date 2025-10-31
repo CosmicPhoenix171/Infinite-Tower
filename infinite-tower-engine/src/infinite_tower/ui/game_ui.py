@@ -65,19 +65,21 @@ class GameUI:
     def __init__(self, screen: pygame.Surface, player):
         self.screen = screen
         self.player = player
-        self.width = SCREEN_WIDTH
-        self.height = SCREEN_HEIGHT
+        # Width/height are recomputed every frame to support resize/fullscreen
+        self.width = self.screen.get_width()
+        self.height = self.screen.get_height()
         
-        # UI Layout Constants (16-bit optimized)
+        # Dynamic layout (updated each frame for responsive UI)
+        self.scale = 1.0
         self.ui_margin = 8
         self.ui_padding = 4
         self.bar_height = 12
-        self.slot_size = 32  # 16-bit style item slots
-        
-        # Font setup (pixel-perfect sizes)
-        self.font_large = pygame.font.Font(None, 24)  # For titles
-        self.font_medium = pygame.font.Font(None, 20)  # For stats
-        self.font_small = pygame.font.Font(None, 16)  # For details
+        self.slot_size = 32
+
+        # Fonts (scaled per frame)
+        self.font_large = pygame.font.Font(None, 24)
+        self.font_medium = pygame.font.Font(None, 20)
+        self.font_small = pygame.font.Font(None, 16)
         
         # UI State
         self.show_minimap = True
@@ -98,8 +100,31 @@ class GameUI:
         self.current_floor = 1
         self.floor_name = "Tower Entrance"
         
+    def _update_layout(self):
+        """Recompute sizing/scale based on current screen size."""
+        self.width = self.screen.get_width()
+        self.height = self.screen.get_height()
+        # Reference 1280x720; clamp scale between 0.75 and 2.0
+        ref_w, ref_h = 1280, 720
+        self.scale = max(0.75, min(2.0, min(self.width / ref_w, self.height / ref_h)))
+
+        self.ui_margin = int(12 * self.scale)
+        self.ui_padding = int(6 * self.scale)
+        self.bar_height = int(14 * self.scale)
+        self.slot_size = int(48 * self.scale)
+
+        # Update fonts if size changed significantly
+        base_large = max(22, int(24 * self.scale))
+        base_medium = max(18, int(20 * self.scale))
+        base_small = max(14, int(16 * self.scale))
+        self.font_large = pygame.font.Font(None, base_large)
+        self.font_medium = pygame.font.Font(None, base_medium)
+        self.font_small = pygame.font.Font(None, base_small)
+
     def draw(self):
         """Draw the complete UI."""
+        # Ensure responsive sizes before drawing
+        self._update_layout()
         # Draw in layers (back to front)
         if self.show_stats:
             self._draw_player_stats_panel()
@@ -121,23 +146,21 @@ class GameUI:
         if self.current_dialog:
             self._draw_dialog_box()
     
-    def _draw_frame(self, rect: pygame.Rect, style: str = 'default'):
-        """Draw a 16-bit style frame with beveled edges."""
-        # Main panel background
-        pygame.draw.rect(self.screen, self.COLORS['bg_panel'], rect)
-        
-        # Outer border (dark)
-        pygame.draw.rect(self.screen, self.COLORS['frame_dark'], rect, 2)
-        
-        # Inner border (light) - offset by 2 pixels
-        inner_rect = rect.inflate(-4, -4)
-        pygame.draw.rect(self.screen, self.COLORS['frame_light'], inner_rect, 1)
-        
-        # Highlight on top-left (16-bit bevel effect)
-        pygame.draw.line(self.screen, self.COLORS['frame_highlight'], 
-                        (rect.left + 2, rect.top + 2), (rect.right - 2, rect.top + 2), 1)
-        pygame.draw.line(self.screen, self.COLORS['frame_highlight'], 
-                        (rect.left + 2, rect.top + 2), (rect.left + 2, rect.bottom - 2), 1)
+    def _draw_frame(self, rect: pygame.Rect, style: str = 'modern'):
+        """Draw a modern translucent panel with rounded corners."""
+        # Create translucent surface for nice blending
+        panel_surf = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
+        # Background with 78% opacity
+        bg = (*self.COLORS['bg_panel'], 200)
+        pygame.draw.rect(panel_surf, bg, panel_surf.get_rect(), border_radius=int(8 * self.scale))
+        # Subtle border
+        border_col = (*self.COLORS['frame_border'], 220)
+        pygame.draw.rect(panel_surf, border_col, panel_surf.get_rect(), width=2, border_radius=int(8 * self.scale))
+        # Soft inner highlight
+        hi_rect = panel_surf.get_rect().inflate(-8, -8)
+        hi = (*self.COLORS['frame_light'], 90)
+        pygame.draw.rect(panel_surf, hi, hi_rect, width=1, border_radius=int(6 * self.scale))
+        self.screen.blit(panel_surf, rect)
     
     def _draw_bar(self, x: int, y: int, width: int, current: float, maximum: float, 
                   color: Tuple[int, int, int], label: str = ""):
@@ -179,8 +202,8 @@ class GameUI:
     
     def _draw_player_stats_panel(self):
         """Draw main player stats panel (top-left)."""
-        panel_width = 220
-        panel_height = 120
+        panel_width = int(260 * self.scale)
+        panel_height = int(130 * self.scale)
         panel_x = self.ui_margin
         panel_y = self.ui_margin
         
@@ -188,9 +211,9 @@ class GameUI:
         self._draw_frame(panel_rect)
         
         # Content area
-        content_x = panel_x + self.ui_padding + 4
-        content_y = panel_y + self.ui_padding + 4
-        bar_width = panel_width - (self.ui_padding * 2) - 8
+        content_x = panel_x + self.ui_padding + int(6 * self.scale)
+        content_y = panel_y + self.ui_padding + int(6 * self.scale)
+        bar_width = panel_width - (self.ui_padding * 2) - int(12 * self.scale)
         
         # Player name/level
         name_text = f"{self.player.name} - Lv.{getattr(self.player, 'level', 1)}"
@@ -198,35 +221,35 @@ class GameUI:
         self.screen.blit(name_surface, (content_x, content_y))
         
         # Health bar
-        self._draw_bar(content_x, content_y + 24, bar_width, 
+        self._draw_bar(content_x, content_y + int(26 * self.scale), bar_width, 
                       self.player.health, self.player.max_health, 
                       self.COLORS['health_full'], "HP")
         
         # Mana bar (placeholder - add mana to player later)
         max_mana = getattr(self.player, 'max_mana', 100)
         current_mana = getattr(self.player, 'mana', max_mana)
-        self._draw_bar(content_x, content_y + 50, bar_width, 
+        self._draw_bar(content_x, content_y + int(54 * self.scale), bar_width, 
                       current_mana, max_mana, 
                       self.COLORS['mana_full'], "MP")
         
         # Stamina bar (for sprint)
         max_stamina = getattr(self.player, 'max_stamina', 100)
         current_stamina = getattr(self.player, 'stamina', max_stamina)
-        self._draw_bar(content_x, content_y + 76, bar_width, 
+        self._draw_bar(content_x, content_y + int(82 * self.scale), bar_width, 
                       current_stamina, max_stamina, 
                       self.COLORS['stamina_full'], "ST")
     
     def _draw_quickbar(self):
         """Draw quick inventory slots (bottom-center)."""
         num_slots = 8
-        slot_spacing = 4
+        slot_spacing = int(6 * self.scale)
         total_width = (self.slot_size * num_slots) + (slot_spacing * (num_slots - 1))
         start_x = (self.width - total_width) // 2
-        start_y = self.height - self.slot_size - self.ui_margin - 8
+        start_y = self.height - self.slot_size - self.ui_margin - int(10 * self.scale)
         
         # Background panel
-        panel_rect = pygame.Rect(start_x - 8, start_y - 8, 
-                                 total_width + 16, self.slot_size + 16)
+        panel_rect = pygame.Rect(start_x - int(10 * self.scale), start_y - int(10 * self.scale), 
+                                 total_width + int(20 * self.scale), self.slot_size + int(20 * self.scale))
         self._draw_frame(panel_rect)
         
         # Draw slots
@@ -240,20 +263,20 @@ class GameUI:
             
             # Slot number
             num_surface = self.font_small.render(str(i + 1), True, self.COLORS['text_gray'])
-            self.screen.blit(num_surface, (slot_x + 2, start_y + 2))
+            self.screen.blit(num_surface, (slot_x + int(3 * self.scale), start_y + int(3 * self.scale)))
             
             # Item placeholder (if player has items in inventory)
             if hasattr(self.player, 'inventory') and i < len(self.player.inventory):
                 item = self.player.inventory[i]
                 # Draw colored box representing item rarity
                 item_color = self._get_item_color(item)
-                item_box = pygame.Rect(slot_x + 8, start_y + 12, 16, 16)
+                item_box = pygame.Rect(slot_x + int(10 * self.scale), start_y + int(12 * self.scale), int(16 * self.scale), int(16 * self.scale))
                 pygame.draw.rect(self.screen, item_color, item_box)
                 pygame.draw.rect(self.screen, WHITE, item_box, 1)
     
     def _draw_minimap(self):
         """Draw minimap (top-right corner)."""
-        map_size = 120
+        map_size = int(180 * self.scale)
         map_x = self.width - map_size - self.ui_margin
         map_y = self.ui_margin
         
@@ -261,9 +284,9 @@ class GameUI:
         self._draw_frame(map_rect)
         
         # Map content area
-        content_x = map_x + 8
-        content_y = map_y + 8
-        content_size = map_size - 16
+        content_x = map_x + int(10 * self.scale)
+        content_y = map_y + int(10 * self.scale)
+        content_size = map_size - int(20 * self.scale)
         
         # Map background
         map_bg = pygame.Rect(content_x, content_y, content_size, content_size)
@@ -290,14 +313,14 @@ class GameUI:
         
         # Label
         label = self.font_small.render("MAP", True, self.COLORS['text_gray'])
-        self.screen.blit(label, (map_x + 4, map_y + map_size - 16))
+        self.screen.blit(label, (map_x + int(6 * self.scale), map_y + map_size - int(18 * self.scale)))
     
     def _draw_equipment_panel(self):
         """Draw equipment slots panel (right side)."""
-        panel_width = 140
-        panel_height = 280
+        panel_width = int(200 * self.scale)
+        panel_height = int(360 * self.scale)
         panel_x = self.width - panel_width - self.ui_margin
-        panel_y = 140  # Below minimap
+        panel_y = int(160 * self.scale)  # Below minimap
         
         panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
         self._draw_frame(panel_rect)
@@ -312,15 +335,15 @@ class GameUI:
             ("Ring", 5),
         ]
         
-        content_x = panel_x + 12
-        content_y = panel_y + 24
+        content_x = panel_x + int(14 * self.scale)
+        content_y = panel_y + int(28 * self.scale)
         
         # Title
         title = self.font_medium.render("Equipment", True, self.COLORS['text_yellow'])
         self.screen.blit(title, (panel_x + 8, panel_y + 4))
         
         for idx, (slot_name, slot_idx) in enumerate(slots):
-            slot_y = content_y + (idx * 40)
+            slot_y = content_y + int(idx * 48 * self.scale)
             
             # Slot box
             slot_rect = pygame.Rect(content_x, slot_y, self.slot_size, self.slot_size)
@@ -334,7 +357,7 @@ class GameUI:
             # Equipped item placeholder (colored box)
             # This would check player.equipment[slot_idx] in real implementation
             if hasattr(self.player, 'equipment') and slot_idx < len(self.player.equipment):
-                item_box = pygame.Rect(content_x + 8, slot_y + 8, 16, 16)
+                item_box = pygame.Rect(content_x + int(8 * self.scale), slot_y + int(8 * self.scale), int(16 * self.scale), int(16 * self.scale))
                 pygame.draw.rect(self.screen, self.COLORS['uncommon'], item_box)
                 pygame.draw.rect(self.screen, WHITE, item_box, 1)
     
@@ -357,14 +380,14 @@ class GameUI:
         """Draw experience bar (bottom of screen)."""
         bar_width = self.width - (self.ui_margin * 2)
         bar_x = self.ui_margin
-        bar_y = self.height - self.ui_margin - 4
+        bar_y = self.height - self.ui_margin - int(6 * self.scale)
         
         # Get player exp (or use placeholder)
         current_exp = getattr(self.player, 'exp', 50)
         max_exp = getattr(self.player, 'max_exp', 100)
         
         # Thin experience bar
-        exp_height = 6
+        exp_height = max(4, int(6 * self.scale))
         bg_rect = pygame.Rect(bar_x, bar_y, bar_width, exp_height)
         pygame.draw.rect(self.screen, self.COLORS['frame_dark'], bg_rect)
         

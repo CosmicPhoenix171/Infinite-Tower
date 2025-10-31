@@ -10,6 +10,7 @@ from src.infinite_tower.config import SCREEN_WIDTH, SCREEN_HEIGHT, FRAME_RATE
 from src.infinite_tower.entities.player import Player
 from src.infinite_tower.entities.enemy import Enemy, EnemyType
 from src.infinite_tower.ui.game_ui import GameUI
+from src.infinite_tower.ui.inventory import InventoryUI
 from src.infinite_tower.systems.combat import CombatSystem
 from src.infinite_tower.systems.physics import Physics
 from src.infinite_tower.utils.input_handler import InputHandler
@@ -19,7 +20,9 @@ from src.infinite_tower.items.loot import LootGenerator
 def main():
     # Initialize Pygame
     pygame.init()
-    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+    # Start resizable; use SCALED for pixel-perfect scaling
+    flags = pygame.SCALED | pygame.RESIZABLE
+    screen = pygame.display.set_mode((1280, 720), flags)
     pygame.display.set_caption("Infinite Tower - 16-bit UI Demo")
     clock = pygame.time.Clock()
     
@@ -87,7 +90,7 @@ def main():
     print("  SHIFT - Sprint (2x speed)")
     print("  SPACE - Attack")
     print("  E - Toggle Equipment Panel")
-    print("  TAB - Toggle Inventory (from old system)")
+    print("  TAB or I - Inventory")
     print("  ENTER - Dismiss Dialog")
     print("  ESC - Quit")
     print("="*60)
@@ -96,6 +99,9 @@ def main():
     # Test notifications
     game_ui.add_notification("Game Started!", game_ui.COLORS['text_green'])
     game_ui.add_notification("Welcome to Floor 1", game_ui.COLORS['text_yellow'])
+    
+    # Inventory UI overlay
+    inventory_ui = InventoryUI(screen, player)
     
     # Main game loop
     running = True
@@ -108,13 +114,24 @@ def main():
         # Handle events
         events = pygame.event.get()
         for event in events:
+            # Let inventory overlay consume events first when visible
+            if inventory_ui.handle_input(event):
+                continue
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
+                elif event.key == pygame.K_f:
+                    # Toggle fullscreen
+                    try:
+                        pygame.display.toggle_fullscreen()
+                    except Exception:
+                        pass
                 elif event.key == pygame.K_e:
                     game_ui.toggle_equipment()
+                elif event.key == pygame.K_TAB or event.key == pygame.K_i:
+                    inventory_ui.toggle()
                 elif event.key == pygame.K_RETURN:
                     game_ui.hide_dialog()
                 elif event.key == pygame.K_t:
@@ -126,12 +143,19 @@ def main():
                 elif event.key == pygame.K_n:
                     # Test notification
                     game_ui.add_notification("Test Notification", game_ui.COLORS['text_yellow'])
+            elif event.type == pygame.VIDEORESIZE:
+                # Recreate surface with new size (SCALED keeps aspect)
+                screen = pygame.display.set_mode((event.w, event.h), flags)
+                # Update UI surfaces holding references
+                game_ui.screen = screen
+                inventory_ui.screen = screen
         
         # Update input handler
         input_handler.update(events)
         
-        # Update player
-        player.handle_input(input_handler)
+        # Update player (freeze movement input when inventory open)
+        if not inventory_ui.is_visible:
+            player.handle_input(input_handler)
         player.update(dt)
         
         # Drain stamina when sprinting
@@ -190,14 +214,15 @@ def main():
         game_ui.update(dt)
         
         # Render
-        # Background gradient (16-bit style)
-        for y in range(SCREEN_HEIGHT):
-            color_val = int(20 + (y / SCREEN_HEIGHT) * 30)
-            pygame.draw.line(screen, (color_val, color_val // 2, color_val // 3), 
-                           (0, y), (SCREEN_WIDTH, y))
+        # Background gradient (optimized for current size)
+        sw, sh = screen.get_size()
+        for y in range(sh):
+            color_val = int(20 + (y / max(1, sh)) * 30)
+            pygame.draw.line(screen, (color_val, color_val // 2, color_val // 3), (0, y), (sw, y))
         
         # Draw floor area (darker rectangle for playable area)
-        floor_rect = pygame.Rect(60, 60, SCREEN_WIDTH - 120, SCREEN_HEIGHT - 140)
+        sw, sh = screen.get_size()
+        floor_rect = pygame.Rect(60, 60, sw - 120, sh - 140)
         pygame.draw.rect(screen, (40, 35, 30), floor_rect)
         pygame.draw.rect(screen, (80, 70, 60), floor_rect, 2)
         
@@ -216,8 +241,10 @@ def main():
         # Draw player
         player.draw(screen)
         
-        # Draw the complete 16-bit UI (on top of everything)
-        game_ui.draw()
+    # Draw the complete 16-bit UI (on top of everything)
+    game_ui.draw()
+    # Draw inventory overlay last
+    inventory_ui.draw()
         
         # Update display
         pygame.display.flip()

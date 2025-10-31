@@ -192,8 +192,15 @@ class InventoryUI:
         if not self.is_visible:
             return
         
+        # Recompute layout based on current screen size (responsive)
+        sw, sh = self.screen.get_size()
+        self.panel_x = (sw - self.panel_width) // 2
+        self.panel_y = (sh - self.panel_height) // 2
+        self.grid_start_x = self.panel_x + 20
+        self.grid_start_y = self.panel_y + 80
+        
         # Semi-transparent background overlay
-        overlay = pygame.Surface((SCREEN_WIDTH, SCREEN_HEIGHT))
+        overlay = pygame.Surface((sw, sh))
         overlay.set_alpha(200)
         overlay.fill(BLACK)
         self.screen.blit(overlay, (0, 0))
@@ -205,7 +212,7 @@ class InventoryUI:
         
         # Title
         title = self.font_large.render("INVENTORY", True, WHITE)
-        title_rect = title.get_rect(center=(SCREEN_WIDTH // 2, self.panel_y + 35))
+        title_rect = title.get_rect(center=(sw // 2, self.panel_y + 35))
         self.screen.blit(title, title_rect)
         
         # Category tabs
