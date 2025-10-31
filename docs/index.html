@@ -66,28 +66,7 @@ async def custom_site():
 
     import pygame
 
-    <script>
-    // Ensure the canvas can receive keyboard focus (Tab, etc.)
-    (function ensureCanvasFocus() {
-      function focusCanvas() {
-        const cv = document.getElementById('canvas') || document.querySelector('canvas');
-        if (!cv) return;
-        if (!cv.hasAttribute('tabindex')) {
-          cv.setAttribute('tabindex','1');
-        }
-        cv.style.outline = 'none';
-        try { cv.focus({preventScroll:true}); } catch (e) { try { cv.focus(); } catch(_){} }
-      }
-      window.addEventListener('load', focusCanvas, {once:true});
-      document.addEventListener('click', focusCanvas, true);
-      // Prevent browser from switching focus with Tab so the event reaches pygame
-      window.addEventListener('keydown', (e) => {
-        if (e.key === 'Tab') {
-          e.preventDefault();
-        }
-      }, {capture:true});
-    })();
-    </script>
+    
     def compose():
         pygame.display.update()
         window.chromakey(None, *screen.get_colorkey(), 40)
@@ -378,7 +357,7 @@ config = {
     </div>
 
 
-    <canvas class="emscripten" id="canvas"
+    <canvas class="emscripten" id="canvas" tabindex="1" style="outline:none"
 width="1px"
 height="1px"
     oncontextmenu="event.preventDefault()" tabindex=1>
@@ -473,6 +452,22 @@ frameborder="1"
                     e.preventDefault();
             }
         }, false);
+
+        // Ensure the canvas can receive keyboard focus and keep Tab in the game
+        try {
+            const cv = document.getElementById('canvas') || document.querySelector('canvas');
+            if (cv) {
+                if (!cv.hasAttribute('tabindex')) cv.setAttribute('tabindex','1');
+                cv.style.outline = 'none';
+                cv.focus({preventScroll:true});
+                // Prevent browser focus traversal on Tab so event reaches pygame
+                window.addEventListener('keydown', (e) => {
+                    if (e.key === 'Tab') e.preventDefault();
+                }, {capture:true});
+                // Also refocus when clicking inside the page
+                document.addEventListener('click', () => { try { cv.focus({preventScroll:true}); } catch(_){} }, true);
+            }
+        } catch (err) { console.warn('Canvas focus hook failed', err); }
 
     }
 
