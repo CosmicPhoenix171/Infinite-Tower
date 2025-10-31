@@ -11,8 +11,8 @@ prohibited and may result in legal action.
 """
 
 # Display Settings
-SCREEN_WIDTH = 800
-SCREEN_HEIGHT = 600
+SCREEN_WIDTH = 1920
+SCREEN_HEIGHT = 1080
 FRAME_RATE = 60  # Renamed from FPS for clarity
 TITLE = "Infinite Tower Engine"
 FULLSCREEN = False

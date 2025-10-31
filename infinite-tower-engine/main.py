@@ -48,7 +48,7 @@ async def main():
     pygame.init()
     # Use resizable + scaled so canvas fills browser; 1280x720 starting size
     flags = pygame.SCALED | pygame.RESIZABLE
-    screen = pygame.display.set_mode((1280, 720), flags)
+    screen = pygame.display.set_mode((1920, 1080), flags)
     pygame.display.set_caption("Infinite Tower - Web Demo")
     clock = pygame.time.Clock()
     
