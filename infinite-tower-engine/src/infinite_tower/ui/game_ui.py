@@ -9,6 +9,7 @@ Complete game UI with 16-bit SNES-style aesthetic using placeholder boxes.
 import pygame
 from typing import Optional, List, Tuple
 from ..config import SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK, GREEN, RED, BLUE
+from .. import __version__ as ENGINE_VERSION
 
 
 class GameUI:
@@ -140,6 +141,7 @@ class GameUI:
         
         self._draw_floor_info()
         self._draw_experience_bar()
+    self._draw_build_version()
         self._draw_damage_numbers()
         self._draw_notifications()
         
@@ -599,3 +601,19 @@ class GameUI:
         """Update UI animations and states."""
         # Update any animated elements
         pass
+
+    # New: Build/version label (bottom-left)
+    def _draw_build_version(self):
+        """Render the engine/game version at the bottom-left corner."""
+        # Compose version string
+        version_text = f"v{ENGINE_VERSION}"
+        # Slight shadow for readability
+        text_surface = self.font_small.render(version_text, True, self.COLORS['text_gray'])
+        shadow_surface = self.font_small.render(version_text, True, BLACK)
+        x = self.ui_margin
+        # Place just above bottom margin, leaving a couple pixels from the very bottom
+        y = self.height - self.ui_margin - text_surface.get_height()
+        # Shadow
+        self.screen.blit(shadow_surface, (x + 1, y + 1))
+        # Text
+        self.screen.blit(text_surface, (x, y))
