@@ -61,8 +61,10 @@ class Enemy:
         # Combat stats
         self.attack_range = 50
         self.attack_cooldown = 0
+        self.base_attack_cooldown = 90  # Base cooldown in frames (~1.5 seconds at 60 FPS)
         self.crit_chance = 0.05  # 5% crit chance
         self.block_chance = 0.0
+        # ...existing code...
         
         # Collision
         self.rect = pygame.Rect(
@@ -110,17 +112,20 @@ class Enemy:
             self.speed *= 0.6
             self.size = 36
             self.block_chance = 0.15
+            self.base_attack_cooldown = 120  # Slower attack (2 seconds)
             
         elif self.enemy_type == EnemyType.RANGER:
             self.attack_range = 150
             self.speed *= 0.8
             self.defense = 1
+            self.base_attack_cooldown = 100  # Medium attack (1.67 seconds)
             
         elif self.enemy_type == EnemyType.FAST:
             self.speed *= 1.5
             self.health = int(self.health * 0.7)
             self.max_health = self.health
             self.size = 24
+            self.base_attack_cooldown = 75  # Faster attack (1.25 seconds)
             
         elif self.enemy_type == EnemyType.BOSS:
             self.max_health = int(self.max_health * 5)
@@ -132,6 +137,7 @@ class Enemy:
             self.size = 48
             self.crit_chance = 0.15
             self.block_chance = 0.1
+            self.base_attack_cooldown = 100  # Boss attack (1.67 seconds)
         
         # Update rect size
         self.rect.width = self.size
@@ -304,6 +310,12 @@ class Enemy:
         health_color = (50, 200, 50)  # Green
         pygame.draw.rect(surface, health_color,
                         (health_bar_x, health_bar_y, current_health_width, health_bar_height))
+        
+        # Floating name above enemy
+        font = pygame.font.Font(None, 20)
+        name_text = font.render(self.name, True, WHITE)
+        name_rect = name_text.get_rect(center=(self.rect.centerx, self.rect.y - 18))
+        surface.blit(name_text, name_rect)
         
         # Draw attack range indicator when attacking (debug)
         if self.is_attacking:

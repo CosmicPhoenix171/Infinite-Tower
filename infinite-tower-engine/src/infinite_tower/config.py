@@ -29,7 +29,7 @@ BLUE = (0, 0, 255)
 # Player Settings
 PLAYER_START_POSITION = (400, 300)  # Changed to tuple for consistency
 PLAYER_HEALTH = 100
-PLAYER_SPEED = 48  # Doubled again to 48 for ultra-fast movement
+PLAYER_SPEED = 50  # Base movement speed
 
 # Enemy Settings
 ENEMY_SPAWN_RATE = 1.0

@@ -145,6 +145,13 @@ class GameUI:
         self._draw_damage_numbers()
         self._draw_notifications()
         
+        # Debug info (sprint status and speed)
+        sprint_status = "SPRINTING" if getattr(self.player, 'is_sprinting', False) else "Normal"
+        speed_val = self.player.speed if self.player else 0
+        stamina_val = getattr(self.player, 'stamina', 100) if self.player else 0
+        debug_text = self.font_small.render(f"{sprint_status} | Speed: {speed_val} | Stamina: {stamina_val:.0f}", True, (0, 255, 0))
+        self.screen.blit(debug_text, (20, 20))
+        
         if self.current_dialog:
             self._draw_dialog_box()
     

@@ -37,10 +37,14 @@ class Player:
         self.position = list(position) if position else [SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2]
         self.velocity = [0.0, 0.0]
         self.speed = PLAYER_SPEED
-        self.sprint_multiplier = 2.0  # Sprint is 2x normal speed
+        self.sprint_multiplier = 3.5  # Sprint is 3.5x normal speed
         self.is_sprinting = False
         self.size = 32  # Player sprite size
         self.inventory = []
+        
+        # Stamina system
+        self.stamina = 100
+        self.max_stamina = 100
         
         # Combat stats
         self.attack_power = 10
@@ -50,7 +54,8 @@ class Player:
         self.attack_cooldown_time = 30  # frames
         
         # Animation and state
-        self.direction = "down"  # up, down, left, right
+        self.direction = "down"  # up, down, left, right (cardinal)
+        self.direction_angle = 0  # 360-degree angle (0-360)
         self.is_moving = False
         
         # Collision rectangle
@@ -63,46 +68,82 @@ class Player:
 
     def handle_input(self, input_handler):
         """
-        Handle player input for movement using WASD or Arrow keys.
+        Handle player input for 360-degree movement using WASD or Arrow keys.
         
         Args:
             input_handler: InputHandler instance for checking key states
         """
+        import math
+        
         self.velocity = [0.0, 0.0]
         self.is_moving = False
         
-        # Check if sprinting (Shift key)
-        self.is_sprinting = (input_handler.get_key(pygame.K_LSHIFT) or 
-                            input_handler.get_key(pygame.K_RSHIFT))
+        # Check if sprinting (Shift key) - only if stamina available
+        player_stamina = getattr(self, 'stamina', 100)
+        self.is_sprinting = ((input_handler.get_key(pygame.K_LSHIFT) or 
+                             input_handler.get_key(pygame.K_RSHIFT)) and 
+                            player_stamina > 0)
         
         # Apply sprint multiplier
         current_speed = self.speed * self.sprint_multiplier if self.is_sprinting else self.speed
         
-        # Movement input (WASD and Arrow keys)
-        if input_handler.get_key(pygame.K_w) or input_handler.get_key(pygame.K_UP):
-            self.velocity[1] = -current_speed
-            self.direction = "up"
-            self.is_moving = True
-        if input_handler.get_key(pygame.K_s) or input_handler.get_key(pygame.K_DOWN):
-            self.velocity[1] = current_speed
-            self.direction = "down"
-            self.is_moving = True
-        if input_handler.get_key(pygame.K_a) or input_handler.get_key(pygame.K_LEFT):
-            self.velocity[0] = -current_speed
-            self.direction = "left"
-            self.is_moving = True
-        if input_handler.get_key(pygame.K_d) or input_handler.get_key(pygame.K_RIGHT):
-            self.velocity[0] = current_speed
-            self.direction = "right"
-            self.is_moving = True
-            
-        # Normalize diagonal movement
-        if self.velocity[0] != 0 and self.velocity[1] != 0:
-            self.velocity[0] *= 0.707  # 1/sqrt(2)
-            self.velocity[1] *= 0.707
+        # Get current facing angle (default to 0 if never set)
+        if not hasattr(self, 'direction_angle'):
+            self.direction_angle = 0
         
-        # Attack input (Space key)
-        if input_handler.get_key(pygame.K_SPACE) and self.attack_cooldown == 0:
+        # ROTATION INPUT: A/Left = Rotate Left, D/Right = Rotate Right
+        # Rotation speed in degrees per frame
+        rotation_speed = 5  # degrees per frame
+        
+        if input_handler.get_key(pygame.K_a) or input_handler.get_key(pygame.K_LEFT):
+            self.direction_angle -= rotation_speed  # Rotate left (counter-clockwise)
+        if input_handler.get_key(pygame.K_d) or input_handler.get_key(pygame.K_RIGHT):
+            self.direction_angle += rotation_speed  # Rotate right (clockwise)
+        
+        # Keep angle in 0-360 range
+        self.direction_angle = self.direction_angle % 360
+        
+        # Update cardinal direction based on angle (for visual facing)
+        angle = self.direction_angle
+        if angle < 22.5 or angle >= 337.5:
+            self.direction = "right"
+        elif 22.5 <= angle < 67.5:
+            self.direction = "down-right"
+        elif 67.5 <= angle < 112.5:
+            self.direction = "down"
+        elif 112.5 <= angle < 157.5:
+            self.direction = "down-left"
+        elif 157.5 <= angle < 202.5:
+            self.direction = "left"
+        elif 202.5 <= angle < 247.5:
+            self.direction = "up-left"
+        elif 247.5 <= angle < 292.5:
+            self.direction = "up"
+        else:  # 292.5 <= angle < 337.5
+            self.direction = "up-right"
+        
+        # MOVEMENT INPUT: W/Up = Forward, S/Down = Backward
+        forward = 0
+        
+        if input_handler.get_key(pygame.K_w) or input_handler.get_key(pygame.K_UP):
+            forward = 1  # Move forward
+        if input_handler.get_key(pygame.K_s) or input_handler.get_key(pygame.K_DOWN):
+            forward = -1  # Move backward
+        
+        # Calculate velocity based on facing angle and forward input
+        if forward != 0:
+            angle_rad = math.radians(self.direction_angle)
+            
+            # Move in direction player is facing (or opposite if backward)
+            self.velocity[0] = math.cos(angle_rad) * forward * current_speed
+            self.velocity[1] = math.sin(angle_rad) * forward * current_speed
+            self.is_moving = True
+        else:
+            self.velocity = [0.0, 0.0]
+            self.is_moving = False
+        
+        # Attack input (Left Mouse Button)
+        if input_handler.get_mouse_button(1) and self.attack_cooldown == 0:
             self.is_attacking = True
             self.attack_cooldown = self.attack_cooldown_time
 
@@ -210,67 +251,115 @@ class Player:
     
     def get_attack_rect(self) -> pygame.Rect:
         """
-        Get the attack hitbox based on current direction.
+        Get the attack hitbox based on current direction (8 directions).
         
         Returns:
             Pygame Rect representing the attack range
         """
+        import math
+        
         attack_range = 40
         attack_width = 30
         
-        if self.direction == "up":
-            return pygame.Rect(
-                self.rect.centerx - attack_width // 2,
-                self.rect.top - attack_range,
-                attack_width,
-                attack_range
-            )
-        elif self.direction == "down":
-            return pygame.Rect(
-                self.rect.centerx - attack_width // 2,
-                self.rect.bottom,
-                attack_width,
-                attack_range
-            )
-        elif self.direction == "left":
-            return pygame.Rect(
-                self.rect.left - attack_range,
-                self.rect.centery - attack_width // 2,
-                attack_range,
-                attack_width
-            )
-        else:  # right
+        # Use direction_angle if available, otherwise use cardinal direction
+        angle = getattr(self, 'direction_angle', 0)
+        
+        # Normalize angle to 0-360
+        angle = angle % 360
+        
+        # Determine direction from angle (8 directions)
+        # Each direction covers 45 degrees
+        # 0° = right, 45° = down-right, 90° = down, etc.
+        
+        if angle < 22.5 or angle >= 337.5:
+            # Right (0°)
             return pygame.Rect(
                 self.rect.right,
                 self.rect.centery - attack_width // 2,
                 attack_range,
                 attack_width
             )
+        elif 22.5 <= angle < 67.5:
+            # Down-Right (45°)
+            return pygame.Rect(
+                self.rect.right - attack_width // 2,
+                self.rect.bottom - attack_width // 2,
+                attack_range,
+                attack_range
+            )
+        elif 67.5 <= angle < 112.5:
+            # Down (90°)
+            return pygame.Rect(
+                self.rect.centerx - attack_width // 2,
+                self.rect.bottom,
+                attack_width,
+                attack_range
+            )
+        elif 112.5 <= angle < 157.5:
+            # Down-Left (135°)
+            return pygame.Rect(
+                self.rect.left - attack_range + attack_width // 2,
+                self.rect.bottom - attack_width // 2,
+                attack_range,
+                attack_range
+            )
+        elif 157.5 <= angle < 202.5:
+            # Left (180°)
+            return pygame.Rect(
+                self.rect.left - attack_range,
+                self.rect.centery - attack_width // 2,
+                attack_range,
+                attack_width
+            )
+        elif 202.5 <= angle < 247.5:
+            # Up-Left (225°)
+            return pygame.Rect(
+                self.rect.left - attack_range + attack_width // 2,
+                self.rect.top - attack_range + attack_width // 2,
+                attack_range,
+                attack_range
+            )
+        elif 247.5 <= angle < 292.5:
+            # Up (270°)
+            return pygame.Rect(
+                self.rect.centerx - attack_width // 2,
+                self.rect.top - attack_range,
+                attack_width,
+                attack_range
+            )
+        else:  # 292.5 <= angle < 337.5
+            # Up-Right (315°)
+            return pygame.Rect(
+                self.rect.right - attack_width // 2,
+                self.rect.top - attack_range + attack_width // 2,
+                attack_range,
+                attack_range
+            )
 
     def draw(self, surface: pygame.Surface):
         """
-        Draw the player on the screen.
+        Draw the player on the screen with rotation based on direction_angle.
         
         Args:
             surface: Pygame surface to draw on
         """
+        import math
+        
         # Draw player (green square for now - will be replaced with sprite)
         pygame.draw.rect(surface, GREEN, self.rect)
         
-        # Draw direction indicator
+        # Draw direction indicator based on continuous angle (360 degrees)
         center_x, center_y = self.rect.center
         indicator_length = 15
         
-        if self.direction == "up":
-            end_pos = (center_x, center_y - indicator_length)
-        elif self.direction == "down":
-            end_pos = (center_x, center_y + indicator_length)
-        elif self.direction == "left":
-            end_pos = (center_x - indicator_length, center_y)
-        else:  # right
-            end_pos = (center_x + indicator_length, center_y)
+        # Get angle in radians
+        angle_rad = math.radians(self.direction_angle)
         
-        pygame.draw.line(surface, WHITE, (center_x, center_y), end_pos, 2)
+        # Calculate end position based on angle
+        end_x = center_x + math.cos(angle_rad) * indicator_length
+        end_y = center_y + math.sin(angle_rad) * indicator_length
+        
+        pygame.draw.line(surface, WHITE, (center_x, center_y), (end_x, end_y), 3)
         
         # Draw attack hitbox when attacking (debug visualization)
         if self.is_attacking:

@@ -163,10 +163,20 @@ class AI:
             self.target = player
             self.last_known_target_position = tuple(player.position) if isinstance(player.position, list) else player.position
             
-            # Decide between attack and chase
-            if distance <= self.attack_range and self.attack_cooldown == 0:
-                self.state = AIState.ATTACK
+            # Get actual attack hitbox range (use entity's attack_range for better positioning)
+            attack_hitbox_range = self.entity.attack_range if hasattr(self.entity, 'attack_range') else self.attack_range
+            optimal_distance = attack_hitbox_range + self.entity.size + 20  # Stay at edge of hitbox + buffer
+            
+            # Decide between attack, chase, and positioning
+            if distance <= optimal_distance:
+                # Already in optimal range, attack if cooldown ready
+                if distance <= attack_hitbox_range and self.attack_cooldown == 0:
+                    self.state = AIState.ATTACK
+                else:
+                    # In range but not in attack rect, hold position or reposition
+                    self.state = AIState.CHASE  # Will move to stay in optimal range
             else:
+                # Too far, chase to get closer
                 self.state = AIState.CHASE
         else:
             # Lost sight of player
@@ -240,16 +250,49 @@ class AI:
     
     def chase_target(self, obstacles: Optional[List] = None):
         """
-        Chase the current target.
+        Chase the current target while maintaining optimal attack range.
         
         Args:
             obstacles: List of obstacle rects
         """
-        if self.target:
-            target_pos = self.target.position if isinstance(self.target.position, tuple) else tuple(self.target.position)
+        if not self.target:
+            if self.last_known_target_position:
+                self.move_towards_position(self.last_known_target_position)
+            return
+        
+        target_pos = self.target.position if isinstance(self.target.position, tuple) else tuple(self.target.position)
+        entity_pos = self.entity.position if isinstance(self.entity.position, tuple) else tuple(self.entity.position)
+        
+        # Calculate current distance
+        distance = self._calculate_distance(entity_pos, target_pos)
+        
+        # Get optimal range based on attack hitbox
+        attack_hitbox_range = self.entity.attack_range if hasattr(self.entity, 'attack_range') else self.attack_range
+        optimal_distance = attack_hitbox_range + self.entity.size + 20
+        
+        # If too far, move closer
+        if distance > optimal_distance:
             self.move_towards_position(target_pos)
-        elif self.last_known_target_position:
-            self.move_towards_position(self.last_known_target_position)
+        # If too close, move back
+        elif distance < optimal_distance - 30:
+            # Move away from target
+            dx = entity_pos[0] - target_pos[0]
+            dy = entity_pos[1] - target_pos[1]
+            dist = math.sqrt(dx * dx + dy * dy)
+            if dist > 0:
+                move_dist = min(self.entity.speed, 5)  # Small steps backward
+                move_x = (dx / dist) * move_dist
+                move_y = (dy / dist) * move_dist
+                if isinstance(self.entity.position, list):
+                    self.entity.position[0] += move_x
+                    self.entity.position[1] += move_y
+                
+                # Update direction
+                if abs(dx) > abs(dy):
+                    self.entity.direction = "right" if dx > 0 else "left"
+                else:
+                    self.entity.direction = "down" if dy > 0 else "up"
+        # Otherwise maintain position (don't move)
     
     def attack_target(self, player):
         """

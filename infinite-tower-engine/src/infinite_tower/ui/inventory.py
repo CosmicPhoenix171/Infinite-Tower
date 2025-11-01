@@ -191,16 +191,12 @@ class InventoryUI:
         return filtered
     
     def draw(self):
-        """Draw the inventory UI."""
+        """Draw the inventory UI with equipment in separate left panel."""
         if not self.is_visible:
             return
         
         # Recompute layout based on current screen size (responsive)
         sw, sh = self.screen.get_size()
-        self.panel_x = (sw - self.panel_width) // 2
-        self.panel_y = (sh - self.panel_height) // 2
-        self.grid_start_x = self.panel_x + 24
-        self.grid_start_y = self.panel_y + 110
         
         # Semi-transparent background overlay
         overlay = pygame.Surface((sw, sh))
@@ -208,15 +204,71 @@ class InventoryUI:
         overlay.fill(BLACK)
         self.screen.blit(overlay, (0, 0))
         
-        # Main panel
-        panel_rect = pygame.Rect(self.panel_x, self.panel_y, self.panel_width, self.panel_height)
-        pygame.draw.rect(self.screen, (38, 40, 56), panel_rect)
-        pygame.draw.rect(self.screen, WHITE, panel_rect, 2)
+        # LEFT PANEL: Equipment
+        eq_panel_width = 220
+        eq_panel_height = 500
+        eq_panel_x = (sw - 1100) // 2
+        eq_panel_y = (sh - 560) // 2
+        eq_panel_rect = pygame.Rect(eq_panel_x, eq_panel_y, eq_panel_width, eq_panel_height)
+        pygame.draw.rect(self.screen, (38, 40, 56), eq_panel_rect)
+        pygame.draw.rect(self.screen, WHITE, eq_panel_rect, 2)
+        
+        # Equipment title
+        eq_title = self.font_medium.render("EQUIPMENT", True, (200, 200, 100))
+        self.screen.blit(eq_title, (eq_panel_x + 15, eq_panel_y + 10))
+        
+        # Equipment slots (vertical)
+        eq_slots = [
+            ("Weapon", 0),
+            ("Helmet", 1),
+            ("Chest", 2),
+            ("Gloves", 3),
+            ("Boots", 4),
+            ("Ring", 5),
+        ]
+        
+        slot_y = eq_panel_y + 50
+        slot_size = 40
+        
+        for idx, (slot_name, slot_idx) in enumerate(eq_slots):
+            x = eq_panel_x + 15
+            y = slot_y + idx * 70
+            
+            # Slot box
+            slot_rect = pygame.Rect(x, y, slot_size, slot_size)
+            pygame.draw.rect(self.screen, (54, 56, 72), slot_rect)
+            pygame.draw.rect(self.screen, GRAY, slot_rect, 1)
+            
+            # Equipped item indicator
+            if hasattr(self.player, 'equipment') and slot_idx < len(self.player.equipment):
+                if self.player.equipment[slot_idx]:
+                    pygame.draw.rect(self.screen, (100, 150, 200), slot_rect.inflate(-4, -4))
+            
+            # Slot label
+            label = self.font_tiny.render(slot_name, True, (160, 160, 180))
+            self.screen.blit(label, (x + slot_size + 10, y + 5))
+        
+        # RIGHT PANEL: Inventory
+        inv_panel_width = 860
+        inv_panel_height = 560
+        inv_panel_x = eq_panel_x + eq_panel_width + 10
+        inv_panel_y = eq_panel_y - 30
+        inv_panel_rect = pygame.Rect(inv_panel_x, inv_panel_y, inv_panel_width, inv_panel_height)
+        pygame.draw.rect(self.screen, (38, 40, 56), inv_panel_rect)
+        pygame.draw.rect(self.screen, WHITE, inv_panel_rect, 2)
         
         # Title
         title = self.font_large.render("INVENTORY", True, WHITE)
-        title_rect = title.get_rect(center=(sw // 2, self.panel_y + 35))
+        title_rect = title.get_rect(center=(inv_panel_x + inv_panel_width // 2, inv_panel_y + 15))
         self.screen.blit(title, title_rect)
+        
+        # Update grid positions for inventory panel
+        self.panel_x = inv_panel_x
+        self.panel_y = inv_panel_y
+        self.panel_width = inv_panel_width
+        self.panel_height = inv_panel_height
+        self.grid_start_x = inv_panel_x + 24
+        self.grid_start_y = inv_panel_y + 85
         
         # Category tabs
         self._draw_category_tabs()
@@ -225,8 +277,8 @@ class InventoryUI:
         self._draw_item_grid()
         
         # Vertical divider between grid and stats
-        divider_x = self.panel_x + self.panel_width - 200
-        pygame.draw.line(self.screen, GRAY, (divider_x, self.panel_y + 90), (divider_x, self.panel_y + self.panel_height - 70), 1)
+        divider_x = inv_panel_x + inv_panel_width - 200
+        pygame.draw.line(self.screen, GRAY, (divider_x, inv_panel_y + 70), (divider_x, inv_panel_y + inv_panel_height - 70), 1)
 
         # Item tooltip (if hovering)
         if self.hovered_slot is not None:
@@ -242,10 +294,10 @@ class InventoryUI:
             "Left Click: Select",
             "Right Click: Use Item"
         ]
-        y_offset = self.panel_y + self.panel_height - 70
+        y_offset = inv_panel_y + inv_panel_height - 70
         for instr in instructions:
             text = self.font_tiny.render(instr, True, (160, 160, 180))
-            self.screen.blit(text, (self.panel_x + 20, y_offset))
+            self.screen.blit(text, (inv_panel_x + 20, y_offset))
             y_offset += 18
     
     def _draw_category_tabs(self):
