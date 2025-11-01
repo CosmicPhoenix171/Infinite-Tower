@@ -7,6 +7,7 @@ from .resources.loader import ResourceLoader
 from . import config
 from .entities.player import Player
 from .entities.enemy import Enemy, EnemyType
+from .entities.wall import Wall
 from .ui.game_ui import GameUI
 from .ui.inventory import InventoryUI
 from .systems.combat import CombatSystem
@@ -70,6 +71,18 @@ class Game:
         self.combat_system: Optional[CombatSystem] = None
         self.physics: Optional[Physics] = None
         self.loot_gen: Optional[LootGenerator] = None
+        self.walls: list[Wall] = []
+
+        # Camera system (tracks player position)
+        self.camera_x = 0
+        self.camera_y = 0
+        self.camera_angle = 0  # Rotation angle in degrees (raw/target)
+        self.camera_angle_smooth = 0.0  # Smoothed angle for rendering
+
+        # World rendering caches (for rotating camera performance)
+        self._world_bg = None           # Static background (floor + grid)
+        self._world_surface = None      # Working surface for entities
+        self._world_size = 0            # Cached size of world surfaces
 
         # Initialize pygame systems
         self._init_pygame()
@@ -82,6 +95,26 @@ class Game:
         self.settings_temp = {}
         self.is_running = True
         self.logger.info("Game started")
+
+    def _update_camera(self):
+        """Update camera position and smoothed rotation to follow the player."""
+        if not self.player:
+            return
+
+        sw, sh = self.screen.get_size()
+        # Center camera on player position
+        self.camera_x = self.player.position[0] - sw // 2
+        self.camera_y = self.player.position[1] - sh // 2
+
+        # Target player's current angle
+        target = getattr(self.player, 'direction_angle', 0) % 360
+
+        # Smoothly interpolate angle across wrap-around (shortest arc)
+        # Normalize difference to [-180, 180]
+        diff = (target - self.camera_angle_smooth + 540) % 360 - 180
+        smoothing = 0.15  # 0..1, higher = snappier
+        self.camera_angle_smooth = (self.camera_angle_smooth + diff * smoothing) % 360
+        self.camera_angle = target
 
     def pause(self):
         """Pause the game."""
@@ -239,6 +272,28 @@ class Game:
             Enemy("Orc", health=80, damage=12, speed=1, position=(600, 200), enemy_type=EnemyType.TANK),
             Enemy("Skeleton", health=40, damage=8, speed=2.5, position=(400, 400), enemy_type=EnemyType.RANGER),
         ]
+
+        # Walls (sample room obstacles) aligned to grid
+        # Create a small arena around the player and a few interior blocks
+        px, py = self.player.position
+        grid_size = 32
+        # Base room size snapped to grid
+        room_w, room_h = 896, 640  # multiples of 32
+        room_left = int(px - room_w // 2)
+        room_top = int(py - room_h // 2)
+        # Snap room origin to grid so grid lines align with walls
+        room_left -= room_left % grid_size
+        room_top -= room_top % grid_size
+        thickness = grid_size  # walls one-cell thick
+        self.walls = [
+            Wall(room_left, room_top, room_w, thickness),  # top
+            Wall(room_left, room_top + room_h - thickness, room_w, thickness),  # bottom
+            Wall(room_left, room_top, thickness, room_h),  # left
+            Wall(room_left + room_w - thickness, room_top, thickness, room_h),  # right
+            # Interior pillars (all snapped to grid)
+            Wall(room_left + 256, room_top + 224, 96, 64),
+            Wall(room_left + 512, room_top + 320, 64, 160),
+        ]
         
         # UI
         self.game_ui = GameUI(self.screen, self.player)
@@ -255,10 +310,30 @@ class Game:
             return
         dt = self.dt
         
+        # Update camera to follow player
+        self._update_camera()
+        
         # Player input and update (freeze movement when inventory open)
         if not (self.inventory_ui and self.inventory_ui.is_visible):
             self.player.handle_input(self.input_handler)
         self.player.update(dt)
+
+        # Collide player with walls (AABB resolution based on minimal overlap)
+        if self.walls:
+            for wall in self.walls:
+                if self.player.rect.colliderect(wall.rect):
+                    side = self.physics.get_collision_side(self.player.rect, wall.rect, tuple(self.player.velocity))
+                    if side == "left":
+                        self.player.rect.right = wall.rect.left
+                    elif side == "right":
+                        self.player.rect.left = wall.rect.right
+                    elif side == "top":
+                        self.player.rect.bottom = wall.rect.top
+                    elif side == "bottom":
+                        self.player.rect.top = wall.rect.bottom
+                    # Sync position back to center of rect
+                    self.player.position[0] = self.player.rect.centerx
+                    self.player.position[1] = self.player.rect.centery
         
         # Maintain minimum distance between player and enemies (prevent clipping)
         for enemy in self.enemies:
@@ -478,34 +553,82 @@ class Game:
         screen.blit(copyright_text, (sw - copyright_text.get_width() - 15, sh - 25))
 
     def _render_gameplay(self, screen: pygame.Surface):
-        """Render the main gameplay."""
-        # Background gradient
+        """Render gameplay with grid, walls, and entities all rotating together with player perspective."""
+        import math
+
         sw, sh = screen.get_size()
-        for y in range(sh):
-            color_val = int(20 + (y / max(1, sh)) * 30)
-            pygame.draw.line(screen, (color_val, color_val // 2, color_val // 3), (0, y), (sw, y))
-        
-        # Floor area
-        floor_rect = pygame.Rect(60, 60, sw - 120, sh - 140)
-        pygame.draw.rect(screen, (40, 35, 30), floor_rect)
-        pygame.draw.rect(screen, (80, 70, 60), floor_rect, 2)
-        
-        # Grid
+
+        # Fill screen background
+        screen.fill((35, 30, 25))
+
+        # 1) Prepare a world surface for everything (grid, walls, entities - all rotate together)
+        world_size = int(math.hypot(sw, sh)) + 64  # minimal square covering screen when rotated
+        if self._world_surface is None or self._world_size != world_size:
+            self._world_size = world_size
+            self._world_surface = pygame.Surface((world_size, world_size))
+
+        world_surface = self._world_surface
+        world_surface.fill((35, 30, 25))  # Fill with background color
+
+        # 2) Draw grid on world surface (world-space, will rotate with everything)
         grid_size = 32
         grid_color = (50, 45, 40)
-        for x in range(floor_rect.left, floor_rect.right, grid_size):
-            pygame.draw.line(screen, grid_color, (x, floor_rect.top), (x, floor_rect.bottom), 1)
-        for y in range(floor_rect.top, floor_rect.bottom, grid_size):
-            pygame.draw.line(screen, grid_color, (floor_rect.left, y), (floor_rect.right, y), 1)
+        world_center_x = world_size // 2
+        world_center_y = world_size // 2
         
-        # Entities
+        # Grid centered around player position in world
+        # Calculate grid offset so lines align with world coordinates
+        grid_offset_x = int((-self.camera_x) % grid_size)
+        grid_offset_y = int((-self.camera_y) % grid_size)
+        
+        # Draw grid lines across the entire world surface
+        for x in range(grid_offset_x - world_size // 2, world_size, grid_size):
+            pygame.draw.line(world_surface, grid_color, (x + world_size // 2, 0), (x + world_size // 2, world_size), 1)
+        for y in range(grid_offset_y - world_size // 2, world_size, grid_size):
+            pygame.draw.line(world_surface, grid_color, (0, y + world_size // 2), (world_size, y + world_size // 2), 1)
+
+        # 3) Draw walls on world surface (world-space, will rotate with grid)
+        if getattr(self, 'walls', None):
+            for wall in self.walls:
+                # Position relative to camera (centered on player)
+                rel_x = wall.rect.x - int(self.camera_x) + world_center_x - sw // 2
+                rel_y = wall.rect.y - int(self.camera_y) + world_center_y - sh // 2
+                temp = pygame.Rect(rel_x, rel_y, wall.rect.width, wall.rect.height)
+                wall.draw(world_surface, rect_override=temp)
+        
+        # 4) Draw enemies on world surface with camera offset
         if self.enemies:
             for enemy in self.enemies:
-                enemy.draw(screen)
-        if self.player:
-            self.player.draw(screen)
+                # Position relative to camera (centered on player)
+                rel_x = enemy.rect.x - int(self.camera_x) + world_center_x - sw // 2
+                rel_y = enemy.rect.y - int(self.camera_y) + world_center_y - sh // 2
+                
+                # Temporarily adjust enemy position for drawing
+                original_x = enemy.rect.x
+                original_y = enemy.rect.y
+                enemy.rect.x = rel_x
+                enemy.rect.y = rel_y
+                enemy.draw(world_surface)
+                enemy.rect.x = original_x
+                enemy.rect.y = original_y
         
-        # UI
+        # 5) Draw player at center of world surface (use center, not top-left)
+        if self.player:
+            original_pos = self.player.rect.center
+            self.player.rect.center = (world_center_x, world_center_y)
+            self.player.draw(world_surface)
+            self.player.rect.center = original_pos
+        
+        # 6) Rotate entire world (grid + walls + entities) so player's facing aligns with screen 'up'.
+        # Angle convention: 0°=right, 90°=down, 180°=left, 270°=up.
+        # If rotation feels reversed, flip direction by using (camera_angle - 270).
+        # Note: Both keep the player roughly stabilized at center; choose based on feel.
+    # Use smoothed angle to reduce jitter
+        rotated_surface = pygame.transform.rotozoom(world_surface, self.camera_angle_smooth - 270, 1.0)
+        rotated_rect = rotated_surface.get_rect(center=(sw // 2, sh // 2))
+        screen.blit(rotated_surface, rotated_rect)
+        
+        # UI (not rotated, stays on screen)
         if self.game_ui:
             self.game_ui.draw()
         if self.inventory_ui:

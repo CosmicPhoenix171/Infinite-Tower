@@ -345,21 +345,34 @@ class Player:
         """
         import math
         
-        # Draw player (green square for now - will be replaced with sprite)
-        pygame.draw.rect(surface, GREEN, self.rect)
-        
-        # Draw direction indicator based on continuous angle (360 degrees)
         center_x, center_y = self.rect.center
-        indicator_length = 15
         
-        # Get angle in radians
-        angle_rad = math.radians(self.direction_angle)
+        # Create a temporary surface for the player sprite
+        player_surface = pygame.Surface((self.size, self.size), pygame.SRCALPHA)
         
-        # Calculate end position based on angle
-        end_x = center_x + math.cos(angle_rad) * indicator_length
-        end_y = center_y + math.sin(angle_rad) * indicator_length
+        # Draw the base square on the temp surface
+        pygame.draw.rect(player_surface, GREEN, (0, 0, self.size, self.size))
         
-        pygame.draw.line(surface, WHITE, (center_x, center_y), (end_x, end_y), 3)
+        # Draw a directional indicator (white line pointing right on the temp surface)
+        # This will show which way the player is facing after rotation
+        pygame.draw.line(player_surface, WHITE, 
+                        (self.size // 2, self.size // 2), 
+                        (self.size, self.size // 2), 3)
+        
+        # Add a triangle at the front to show facing direction more clearly
+        tip_x = self.size
+        tip_y = self.size // 2
+        pygame.draw.polygon(player_surface, WHITE, [
+            (tip_x, tip_y),
+            (tip_x - 8, tip_y - 6),
+            (tip_x - 8, tip_y + 6)
+        ])
+        
+        # Rotate the player surface by the direction angle
+        # Since the world rotates, we need to counter-rotate the sprite
+        rotated = pygame.transform.rotate(player_surface, -self.direction_angle)
+        rotated_rect = rotated.get_rect(center=(center_x, center_y))
+        surface.blit(rotated, rotated_rect)
         
         # Draw attack hitbox when attacking (debug visualization)
         if self.is_attacking:
