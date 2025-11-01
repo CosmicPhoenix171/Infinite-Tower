@@ -345,34 +345,25 @@ class Player:
         """
         import math
         
+        # Draw player body (green square for now - will be replaced with sprite)
+        pygame.draw.rect(surface, GREEN, self.rect)
+        
+        # Since the world rotates around the player, the player always faces "up" on screen
+        # Draw a simple arrow/triangle shape pointing up to show this
         center_x, center_y = self.rect.center
         
-        # Create a temporary surface for the player sprite
-        player_surface = pygame.Surface((self.size, self.size), pygame.SRCALPHA)
+        # Draw a triangle pointing upward (player's facing direction in screen space)
+        half_size = self.size // 2
+        points = [
+            (center_x, center_y - half_size),  # Top point (forward)
+            (center_x - half_size // 2, center_y + half_size // 2),  # Bottom left
+            (center_x + half_size // 2, center_y + half_size // 2),  # Bottom right
+        ]
+        pygame.draw.polygon(surface, (0, 200, 0), points)
+        pygame.draw.polygon(surface, WHITE, points, 2)
         
-        # Draw the base square on the temp surface
-        pygame.draw.rect(player_surface, GREEN, (0, 0, self.size, self.size))
-        
-        # Draw a directional indicator (white line pointing right on the temp surface)
-        # This will show which way the player is facing after rotation
-        pygame.draw.line(player_surface, WHITE, 
-                        (self.size // 2, self.size // 2), 
-                        (self.size, self.size // 2), 3)
-        
-        # Add a triangle at the front to show facing direction more clearly
-        tip_x = self.size
-        tip_y = self.size // 2
-        pygame.draw.polygon(player_surface, WHITE, [
-            (tip_x, tip_y),
-            (tip_x - 8, tip_y - 6),
-            (tip_x - 8, tip_y + 6)
-        ])
-        
-        # Rotate the player surface by the direction angle
-        # Since the world rotates, we need to counter-rotate the sprite
-        rotated = pygame.transform.rotate(player_surface, -self.direction_angle)
-        rotated_rect = rotated.get_rect(center=(center_x, center_y))
-        surface.blit(rotated, rotated_rect)
+        # Draw a small dot at center
+        pygame.draw.circle(surface, WHITE, (center_x, center_y), 3)
         
         # Draw attack hitbox when attacking (debug visualization)
         if self.is_attacking:
