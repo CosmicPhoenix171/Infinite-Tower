@@ -10,7 +10,7 @@ from typing import List, Tuple, Dict, Optional
 from enum import Enum
 from ..entities.enemy import Enemy, EnemyType
 from ..items.loot import LootGenerator
-from ..config import SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK
+from ..config import SCREEN_WIDTH, SCREEN_HEIGHT, WHITE, BLACK, ENEMY_SPEED
 
 
 class RoomType(Enum):
@@ -82,18 +82,33 @@ class Room:
         """
         mid_w = self.width // 2
         mid_h = self.height // 2
+        # Make doors wider for easier passage (prefer odd widths for symmetry)
+        door_w = 3 if self.width >= 7 else 1
+        door_h = 3 if self.height >= 7 else 1
         
         if side == "top" and mid_w < self.width:
-            self.tiles[0][mid_w] = TileType.DOOR
+            start = max(0, mid_w - door_w // 2)
+            end = min(self.width - 1, start + door_w - 1)
+            for c in range(start, end + 1):
+                self.tiles[0][c] = TileType.DOOR
             self.doors.append(("top", mid_w, 0))
         elif side == "bottom" and mid_w < self.width:
-            self.tiles[self.height - 1][mid_w] = TileType.DOOR
+            start = max(0, mid_w - door_w // 2)
+            end = min(self.width - 1, start + door_w - 1)
+            for c in range(start, end + 1):
+                self.tiles[self.height - 1][c] = TileType.DOOR
             self.doors.append(("bottom", mid_w, self.height - 1))
         elif side == "left" and mid_h < self.height:
-            self.tiles[mid_h][0] = TileType.DOOR
+            start = max(0, mid_h - door_h // 2)
+            end = min(self.height - 1, start + door_h - 1)
+            for r in range(start, end + 1):
+                self.tiles[r][0] = TileType.DOOR
             self.doors.append(("left", 0, mid_h))
         elif side == "right" and mid_h < self.height:
-            self.tiles[mid_h][self.width - 1] = TileType.DOOR
+            start = max(0, mid_h - door_h // 2)
+            end = min(self.height - 1, start + door_h - 1)
+            for r in range(start, end + 1):
+                self.tiles[r][self.width - 1] = TileType.DOOR
             self.doors.append(("right", self.width - 1, mid_h))
     
     def add_enemy_spawn(self, x: int, y: int):
@@ -340,7 +355,8 @@ class FloorGenerator:
                 enemy_type = EnemyType.BOSS
                 health = 100 + self.floor_level * 50
                 damage = 15 + self.floor_level * 3
-                speed = 2
+                # Use configurable base speed; type-specific adjustments happen in Enemy
+                speed = ENEMY_SPEED
             else:
                 # Random enemy type
                 type_roll = random.random()
@@ -355,7 +371,8 @@ class FloorGenerator:
                 
                 health = 30 + self.floor_level * 10
                 damage = 5 + self.floor_level * 2
-                speed = 2
+                # Use configurable base speed; type-specific adjustments happen in Enemy
+                speed = ENEMY_SPEED
             
             name = f"{enemy_type.value.capitalize()} Enemy"
             enemy = Enemy(name, health, damage, speed, (pixel_x, pixel_y), enemy_type)

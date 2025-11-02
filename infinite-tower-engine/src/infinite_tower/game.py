@@ -14,6 +14,14 @@ from .systems.combat import CombatSystem
 from .systems.physics import Physics
 from .items.loot import LootGenerator
 from . import __version__ as ENGINE_VERSION
+from .floors.generator import FloorGenerator, RoomType, TileType
+
+# Optional GPU renderer via pygame._sdl2
+try:
+    from pygame._sdl2.video import Window as SDLWindow, Renderer as SDLRenderer, Texture as SDLTexture
+    _SDL2_AVAILABLE = True
+except Exception:
+    _SDL2_AVAILABLE = False
 
 
 class Game:
@@ -28,9 +36,23 @@ class Game:
                 self.logger.info("Audio system initialized")
             except pygame.error as e:
                 self.logger.warning(f"Audio initialization failed: {e}. Continuing without audio.")
-            flags = pygame.SCALED | pygame.RESIZABLE
-            self.screen = pygame.display.set_mode((config.SCREEN_WIDTH, config.SCREEN_HEIGHT), flags)
-            pygame.display.set_caption(config.TITLE)
+            # Decide on GPU vs CPU rendering
+            self.use_gpu = bool(getattr(config, 'USE_GPU_RENDERER', False) and _SDL2_AVAILABLE)
+            if self.use_gpu:
+                # Initialize display mode first (required for Surface creation)
+                pygame.display.set_mode((1, 1))  # Minimal display to enable Surface creation
+                # Create SDL2 Window/Renderer; no classic display surface
+                self.window = SDLWindow(config.TITLE, size=(config.SCREEN_WIDTH, config.SCREEN_HEIGHT), resizable=True)
+                self.renderer = SDLRenderer(self.window, vsync=getattr(config, 'GPU_VSYNC', True))
+                self.screen = None
+                # UI overlay surface (drawn unrotated)
+                self._ui_surface = pygame.Surface((config.SCREEN_WIDTH, config.SCREEN_HEIGHT), pygame.SRCALPHA).convert_alpha()
+            else:
+                flags = pygame.SCALED | pygame.RESIZABLE
+                self.screen = pygame.display.set_mode((config.SCREEN_WIDTH, config.SCREEN_HEIGHT), flags)
+                pygame.display.set_caption(config.TITLE)
+                # UI overlay surface for consistency
+                self._ui_surface = pygame.Surface((config.SCREEN_WIDTH, config.SCREEN_HEIGHT), pygame.SRCALPHA).convert_alpha()
             self.logger.info("Pygame initialized successfully")
         except pygame.error as e:
             self.logger.error(f"Failed to initialize pygame: {e}")
@@ -54,6 +76,9 @@ class Game:
 
         # Setup logging FIRST
         self.logger = logging.getLogger(__name__)
+
+        # Initialize pygame systems early (needed before loading fonts/resources)
+        self._init_pygame()
 
         # Initialize systems
         self.input_handler = InputHandler()
@@ -79,13 +104,31 @@ class Game:
         self.camera_angle = 0  # Rotation angle in degrees (raw/target)
         self.camera_angle_smooth = 0.0  # Smoothed angle for rendering
 
+        # World bounds in pixels (min_x, min_y, max_x, max_y)
+        self.world_bounds: Optional[tuple[int, int, int, int]] = None
+
         # World rendering caches (for rotating camera performance)
         self._world_bg = None           # Static background (floor + grid)
         self._world_surface = None      # Working surface for entities
         self._world_size = 0            # Cached size of world surfaces
+        self._last_rotated = None       # Cache last rotated surface
+        self._last_rotation_angle = None  # Cache angle of last rotation
 
-        # Initialize pygame systems
-        self._init_pygame()
+        # Debug flags and UI
+        self.debug_flags = {
+            'show_fps': False,
+            'show_collision': False,
+            'show_vision': False,
+            'show_ai': False,
+        }
+        self._debug_ui_rects = {}
+
+        # Pause/settings UI state defaults (needed when starting from main menu)
+        self.pause_substate = None  # None, 'debug'
+        self.settings_tab = 'sound'
+        self.settings_temp = {}
+
+    # Pygame already initialized above
 
     def start(self):
         """Start the game and enter the main loop."""
@@ -93,6 +136,7 @@ class Game:
         self.pause_substate = None  # None, 'settings'
         self.settings_tab = 'sound'  # 'sound', 'graphics', 'keybinds'
         self.settings_temp = {}
+        self.current_state = "playing"
         self.is_running = True
         self.logger.info("Game started")
 
@@ -112,7 +156,7 @@ class Game:
         # Smoothly interpolate angle across wrap-around (shortest arc)
         # Normalize difference to [-180, 180]
         diff = (target - self.camera_angle_smooth + 540) % 360 - 180
-        smoothing = 0.15  # 0..1, higher = snappier
+        smoothing = 0.25  # 0..1, higher = snappier (increased from 0.15 for more responsive feel)
         self.camera_angle_smooth = (self.camera_angle_smooth + diff * smoothing) % 360
         self.camera_angle = target
 
@@ -120,17 +164,20 @@ class Game:
         """Pause the game."""
         if self.current_state == "playing":
             self.current_state = "paused"
+            self.is_running = False
             self.logger.info("Game paused")
 
     def resume(self):
         """Resume the game from pause."""
         if self.current_state == "paused":
             self.current_state = "playing"
+            self.is_running = True
             self.logger.info("Game resumed")
 
     def end(self):
         """End the game and cleanup resources."""
         self.is_running = False
+        self.current_state = "quit"
         self.cleanup()
         self.logger.info("Game ended")
 
@@ -181,12 +228,39 @@ class Game:
             # Remove keyup-based toggling to ensure Tab is a true toggle (no press-and-hold behavior)
             elif event.type == pygame.KEYUP:
                 pass
+            # Main menu mouse handling
+            if self.current_state == "menu":
+                if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    if hasattr(self, '_menu_start_rect') and self._menu_start_rect.collidepoint(event.pos):
+                        self._start_play()
+                        self.logger.info("Transitioning to gameplay")
+                        return
+                    if hasattr(self, '_menu_quit_rect') and self._menu_quit_rect.collidepoint(event.pos):
+                        self.end()
+                        self.logger.info("Quit from main menu")
+                        return
+            
             # Pause menu mouse handling
             if self.current_state == "paused":
                 if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                    # If in debug substate, handle debug toggles
+                    if self.pause_substate == 'debug':
+                        # Back button
+                        if hasattr(self, '_debug_back_rect') and self._debug_back_rect.collidepoint(event.pos):
+                            self.pause_substate = None
+                            return
+                        # Toggle flags
+                        for key, rect in self._debug_ui_rects.items():
+                            if rect.collidepoint(event.pos):
+                                self.debug_flags[key] = not self.debug_flags.get(key, False)
+                                return
+                    # Base pause menu buttons
                     buttons = self._compute_pause_buttons()
                     if buttons['resume'].collidepoint(event.pos):
                         self.resume()
+                        return
+                    if buttons['debug'].collidepoint(event.pos):
+                        self.pause_substate = 'debug'
                         return
                     if buttons['quit'].collidepoint(event.pos):
                         self.end()
@@ -201,14 +275,24 @@ class Game:
                             if self._game_over_quit_rect.collidepoint(event.pos):
                                 self.end()
                                 return
-            elif event.type == pygame.VIDEORESIZE:
-                # Recreate surface with new size
-                flags = pygame.SCALED | pygame.RESIZABLE
-                self.screen = pygame.display.set_mode((event.w, event.h), flags)
-                # Update UI surfaces
-                if self.game_ui:
-                    self.game_ui.screen = self.screen
-                if self.inventory_ui:
+            if event.type == pygame.VIDEORESIZE:
+                if getattr(self, 'use_gpu', False) and getattr(self, 'window', None):
+                    # Resize SDL window and UI surface
+                    self.window.size = (event.w, event.h)
+                    self._ui_surface = pygame.Surface((event.w, event.h), pygame.SRCALPHA).convert_alpha()
+                    # Update UI surfaces
+                    if self.game_ui:
+                        self.game_ui.screen = self._ui_surface
+                    if self.inventory_ui:
+                        self.inventory_ui.screen = self._ui_surface
+                else:
+                    flags = pygame.SCALED | pygame.RESIZABLE
+                    self.screen = pygame.display.set_mode((event.w, event.h), flags)
+                    # Update UI surfaces
+                    if self.game_ui:
+                        self.game_ui.screen = self.screen
+                    if self.inventory_ui:
+                        self.inventory_ui.screen = self.screen
                     self.inventory_ui.screen = self.screen
 
     def update(self, dt: float = 0.0):
@@ -246,6 +330,10 @@ class Game:
         self.combat_system = CombatSystem()
         self.physics = Physics()
         self.loot_gen = LootGenerator(seed=12345)
+        # Floor generator
+        # Use a time-based seed for variability across runs
+        seed_str = f"floor-{pygame.time.get_ticks()}"
+        self.floor_gen = FloorGenerator(seed_str)
         
         # Player
         self.player = Player("Hero", health=10000, position=(config.SCREEN_WIDTH // 2, config.SCREEN_HEIGHT // 2))
@@ -266,39 +354,114 @@ class Game:
             item = self.loot_gen.generate_random_item(floor_level=1)
             self.player.add_to_inventory(item)
 
-        # Enemies
-        self.enemies = [
-            Enemy("Goblin", health=30, damage=5, speed=2, position=(200, 150), enemy_type=EnemyType.FAST),
-            Enemy("Orc", health=80, damage=12, speed=1, position=(600, 200), enemy_type=EnemyType.TANK),
-            Enemy("Skeleton", health=40, damage=8, speed=2.5, position=(400, 400), enemy_type=EnemyType.RANGER),
-        ]
+        # Enemies will be spawned by the floor generator per-room
+        self.enemies = []
 
-        # Walls (sample room obstacles) aligned to grid
-        # Create a small arena around the player and a few interior blocks
-        px, py = self.player.position
-        grid_size = 32
-        # Base room size snapped to grid
-        room_w, room_h = 896, 640  # multiples of 32
-        room_left = int(px - room_w // 2)
-        room_top = int(py - room_h // 2)
-        # Snap room origin to grid so grid lines align with walls
-        room_left -= room_left % grid_size
-        room_top -= room_top % grid_size
-        thickness = grid_size  # walls one-cell thick
-        self.walls = [
-            Wall(room_left, room_top, room_w, thickness),  # top
-            Wall(room_left, room_top + room_h - thickness, room_w, thickness),  # bottom
-            Wall(room_left, room_top, thickness, room_h),  # left
-            Wall(room_left + room_w - thickness, room_top, thickness, room_h),  # right
-            # Interior pillars (all snapped to grid)
-            Wall(room_left + 256, room_top + 224, 96, 64),
-            Wall(room_left + 512, room_top + 320, 64, 160),
-        ]
+        # Generate floor layout and walls from tiles (no blocked-off rooms)
+        rooms = self.floor_gen.generate_floor(num_rooms=6, floor_level=1)
+        tile_size = self.floor_gen.tile_size
+
+        # Ensure every room has at least one door (avoid enclosed rooms)
+        for room in rooms:
+            if len(getattr(room, 'doors', [])) == 0:
+                # Add a default door on top
+                try:
+                    room.add_door("top")
+                except Exception:
+                    pass
+
+    # Pick starting room (SAFE if available), place player at its center
+        start_room = next((r for r in rooms if r.room_type == RoomType.SAFE), rooms[0] if rooms else None)
+        if start_room:
+            # Convert room center (in room grid space) to world pixels
+            # World tile coordinates: (room.x*20 + local_col)
+            center_col = start_room.width // 2
+            center_row = start_room.height // 2
+            world_tx = (start_room.x * 20 + center_col)
+            world_ty = (start_room.y * 20 + center_row)
+            self.player.position = [world_tx * tile_size, world_ty * tile_size]
+            self.player.rect.center = (int(self.player.position[0]), int(self.player.position[1]))
+
+        # Spawn enemies from rooms (based on generator population)
+        for room in rooms:
+            self.enemies.extend(self.floor_gen.spawn_enemies(room))
+
+        # Build Wall entities from room tiles by merging horizontal wall runs; skip DOOR tiles
+        self.walls = []
+        for room in rooms:
+            base_tx = room.x * 20
+            base_ty = room.y * 20
+            for row_idx, row in enumerate(room.tiles):
+                col = 0
+                while col < room.width:
+                    # Start of a wall run?
+                    if row[col] == TileType.WALL:
+                        run_start = col
+                        # Extend until non-wall or end
+                        while col < room.width and row[col] == TileType.WALL:
+                            col += 1
+                        run_len = col - run_start
+                        # Compute world pixel rect for this horizontal wall run
+                        tile_x = (base_tx + run_start) * tile_size
+                        tile_y = (base_ty + row_idx) * tile_size
+                        wall_w = run_len * tile_size
+                        wall_h = tile_size
+                        # If any tile within the run is a DOOR, split around it
+                        has_door = any((row[c] == TileType.DOOR) for c in range(run_start, run_start + run_len))
+                        if not has_door:
+                            self.walls.append(Wall(tile_x, tile_y, wall_w, wall_h))
+                        else:
+                            # Emit segments skipping door tiles
+                            seg_start = run_start
+                            c = run_start
+                            while c < run_start + run_len:
+                                if row[c] == TileType.DOOR:
+                                    if c > seg_start:
+                                        seg_len = c - seg_start
+                                        seg_x = (base_tx + seg_start) * tile_size
+                                        seg_y = tile_y
+                                        self.walls.append(Wall(seg_x, seg_y, seg_len * tile_size, tile_size))
+                                    seg_start = c + 1
+                                c += 1
+                            if seg_start < run_start + run_len:
+                                seg_len = (run_start + run_len) - seg_start
+                                seg_x = (base_tx + seg_start) * tile_size
+                                seg_y = tile_y
+                                self.walls.append(Wall(seg_x, seg_y, seg_len * tile_size, tile_size))
+                    else:
+                        col += 1
+
+        # Compute world bounds from generated rooms
+        if rooms:
+            min_tx = min(r.x * 20 for r in rooms)
+            min_ty = min(r.y * 20 for r in rooms)
+            max_tx = max(r.x * 20 + r.width for r in rooms)
+            max_ty = max(r.y * 20 + r.height for r in rooms)
+            pad_tiles = 2
+            self.world_bounds = (
+                (min_tx - pad_tiles) * tile_size,
+                (min_ty - pad_tiles) * tile_size,
+                (max_tx + pad_tiles) * tile_size,
+                (max_ty + pad_tiles) * tile_size,
+            )
+
+            # Add outer border walls around the world bounds
+            bx0, by0, bx1, by1 = self.world_bounds
+            thickness = tile_size
+            # Top
+            self.walls.append(Wall(bx0, by0, bx1 - bx0, thickness))
+            # Bottom
+            self.walls.append(Wall(bx0, by1 - thickness, bx1 - bx0, thickness))
+            # Left
+            self.walls.append(Wall(bx0, by0, thickness, by1 - by0))
+            # Right
+            self.walls.append(Wall(bx1 - thickness, by0, thickness, by1 - by0))
         
         # UI
-        self.game_ui = GameUI(self.screen, self.player)
+        ui_target = self._ui_surface if getattr(self, 'use_gpu', False) else self.screen
+        self.game_ui = GameUI(ui_target, self.player)
         self.game_ui.set_floor(1, "Entrance Hall")
-        self.inventory_ui = InventoryUI(self.screen, self.player)
+        self.inventory_ui = InventoryUI(ui_target, self.player)
         self.game_ui.add_notification("Game Started!", self.game_ui.COLORS['text_green'])
         self.game_ui.add_notification("Welcome to Floor 1", self.game_ui.COLORS['text_yellow'])
         
@@ -316,7 +479,8 @@ class Game:
         # Player input and update (freeze movement when inventory open)
         if not (self.inventory_ui and self.inventory_ui.is_visible):
             self.player.handle_input(self.input_handler)
-        self.player.update(dt)
+        # Allow player to move within world bounds (not clamped to screen)
+        self.player.update(dt, bounds=self.world_bounds)
 
         # Collide player with walls (AABB resolution based on minimal overlap)
         if self.walls:
@@ -393,7 +557,7 @@ class Game:
         # Enemies
         for enemy in self.enemies[:]:
             if enemy.is_alive():
-                enemy.update(self.player, dt)
+                enemy.update(self.player, dt, obstacles=self.walls, bounds=self.world_bounds)
             else:
                 if enemy in self.enemies:
                     self.enemies.remove(enemy)
@@ -453,28 +617,51 @@ class Game:
         # TODO: Handle game over logic, restart options, etc.
         pass
 
-    def render(self, screen: pygame.Surface):
+    def render(self, screen: Optional[pygame.Surface]):
         """
         Render the current game state to the provided screen.
         
         Args:
             screen: The pygame surface to render to
         """
-        if not screen:
+        if not screen and not getattr(self, 'use_gpu', False):
             return
             
-        # Clear screen
-        screen.fill(config.BACKGROUND_COLOR)
+        # Clear target
+        if getattr(self, 'use_gpu', False):
+            # In GPU mode, clear UI surface for menu/pause/game_over; gameplay clears inside
+            self._ui_surface.fill(config.BACKGROUND_COLOR)
+        else:
+            screen.fill(config.BACKGROUND_COLOR)
         
         # Render based on current game state
         if self.current_state == "menu":
-            self._render_menu(screen)
+            target = self._ui_surface if getattr(self, 'use_gpu', False) else screen
+            self._render_menu(target)
+            if getattr(self, 'use_gpu', False):
+                # Present UI texture
+                ui_tex = SDLTexture.from_surface(self.renderer, self._ui_surface)
+                sw, sh = target.get_size()
+                ui_tex.draw(None, (0, 0, sw, sh), 0)
+                self.renderer.present()
         elif self.current_state == "playing":
             self._render_gameplay(screen)
         elif self.current_state == "paused":
-            self._render_pause(screen)
+            target = self._ui_surface if getattr(self, 'use_gpu', False) else screen
+            self._render_pause(target)
+            if getattr(self, 'use_gpu', False):
+                ui_tex = SDLTexture.from_surface(self.renderer, self._ui_surface)
+                sw, sh = target.get_size()
+                ui_tex.draw(None, (0, 0, sw, sh), 0)
+                self.renderer.present()
         elif self.current_state == "game_over":
-            self._render_game_over(screen)
+            target = self._ui_surface if getattr(self, 'use_gpu', False) else screen
+            self._render_game_over(target)
+            if getattr(self, 'use_gpu', False):
+                ui_tex = SDLTexture.from_surface(self.renderer, self._ui_surface)
+                sw, sh = target.get_size()
+                ui_tex.draw(None, (0, 0, sw, sh), 0)
+                self.renderer.present()
 
     def _render_menu(self, screen: pygame.Surface):
         """Render the main menu."""
@@ -521,23 +708,38 @@ class Game:
         # Start button
         start_y = sh // 2 - 30
         start_rect = pygame.Rect(btn_x, start_y, btn_width, btn_height)
-        pygame.draw.rect(screen, (70, 150, 200), start_rect)
+        
+        # Hover effect for Start button
+        mouse_pos = pygame.mouse.get_pos()
+        start_hover = start_rect.collidepoint(mouse_pos)
+        start_color = (90, 170, 220) if start_hover else (70, 150, 200)
+        
+        pygame.draw.rect(screen, start_color, start_rect)
         pygame.draw.rect(screen, (150, 220, 255), start_rect, 3)
         start_font = pygame.font.Font(None, 32)
         start_text = start_font.render("START GAME", True, (255, 255, 255))
         start_text_rect = start_text.get_rect(center=start_rect.center)
         screen.blit(start_text, start_text_rect)
-        screen.blit(start_font.render("Press ENTER", True, (100, 200, 255)), (btn_x + 10, start_y + 58))
+        
+        # Store for click detection
+        self._menu_start_rect = start_rect
         
         # Quit button
         quit_y = sh // 2 + 50
         quit_rect = pygame.Rect(btn_x, quit_y, btn_width, btn_height)
-        pygame.draw.rect(screen, (150, 70, 70), quit_rect)
+        
+        # Hover effect for Quit button
+        quit_hover = quit_rect.collidepoint(mouse_pos)
+        quit_color = (170, 90, 90) if quit_hover else (150, 70, 70)
+        
+        pygame.draw.rect(screen, quit_color, quit_rect)
         pygame.draw.rect(screen, (255, 150, 150), quit_rect, 3)
         quit_text = start_font.render("QUIT", True, (255, 255, 255))
         quit_text_rect = quit_text.get_rect(center=quit_rect.center)
         screen.blit(quit_text, quit_text_rect)
-        screen.blit(start_font.render("Press Q", True, (255, 100, 100)), (btn_x + 10, quit_y + 58))
+        
+        # Store for click detection
+        self._menu_quit_rect = quit_rect
         
         # Controls hint
         hint_font = pygame.font.Font(None, 18)
@@ -612,62 +814,219 @@ class Game:
                 enemy.rect.x = original_x
                 enemy.rect.y = original_y
         
-        # 5) Draw player at center of world surface (use center, not top-left)
-        if self.player:
-            original_pos = self.player.rect.center
-            self.player.rect.center = (world_center_x, world_center_y)
-            self.player.draw(world_surface)
-            self.player.rect.center = original_pos
+        # 4b) Draw player's attack rect on world surface so it rotates with the world
+        if self.player and getattr(self.player, 'is_attacking', False):
+            attack_rect = self.player.get_attack_rect()
+            arx = attack_rect.x - int(self.camera_x) + world_center_x - sw // 2
+            ary = attack_rect.y - int(self.camera_y) + world_center_y - sh // 2
+            pygame.draw.rect(world_surface, (255, 80, 80), pygame.Rect(arx, ary, attack_rect.width, attack_rect.height), 2)
+
+        # 4c) Debug overlays drawn on world surface (rotate with world)
+        if getattr(self, 'debug_flags', None):
+            # Collision boxes
+            if self.debug_flags.get('show_collision', False):
+                # Walls
+                for wall in getattr(self, 'walls', []) or []:
+                    rel_x = wall.rect.x - int(self.camera_x) + world_center_x - sw // 2
+                    rel_y = wall.rect.y - int(self.camera_y) + world_center_y - sh // 2
+                    pygame.draw.rect(world_surface, (0, 200, 255), pygame.Rect(rel_x, rel_y, wall.rect.width, wall.rect.height), 1)
+                # Player
+                if self.player:
+                    prx = self.player.rect.x - int(self.camera_x) + world_center_x - sw // 2
+                    pry = self.player.rect.y - int(self.camera_y) + world_center_y - sh // 2
+                    pygame.draw.rect(world_surface, (0, 255, 150), pygame.Rect(prx, pry, self.player.rect.width, self.player.rect.height), 1)
+                # Enemies
+                for enemy in self.enemies:
+                    erx = enemy.rect.x - int(self.camera_x) + world_center_x - sw // 2
+                    ery = enemy.rect.y - int(self.camera_y) + world_center_y - sh // 2
+                    pygame.draw.rect(world_surface, (255, 220, 0), pygame.Rect(erx, ery, enemy.rect.width, enemy.rect.height), 1)
+
+            # Vision cones
+            if self.debug_flags.get('show_vision', False):
+                try:
+                    import math
+                    for enemy in self.enemies:
+                        cx = enemy.rect.centerx - int(self.camera_x) + world_center_x - sw // 2
+                        cy = enemy.rect.centery - int(self.camera_y) + world_center_y - sh // 2
+                        facing = getattr(enemy, 'direction_angle', 0.0)
+                        # Get AI FOV/range via enemy.ai
+                        fov = getattr(enemy.ai, 'fov_degrees', 90)
+                        rng = getattr(enemy.ai, 'vision_range', 300)
+                        # Build cone polygon
+                        steps = 12
+                        half = fov / 2.0
+                        points = [(cx, cy)]
+                        for i in range(steps + 1):
+                            a = (facing - half) + (fov * i / steps)
+                            rad = math.radians(a)
+                            px = cx + math.cos(rad) * rng
+                            py = cy + math.sin(rad) * rng
+                            points.append((px, py))
+                        pygame.draw.polygon(world_surface, (255, 255, 0), points, 1)
+                except Exception:
+                    pass
+
+            # AI state labels
+            if self.debug_flags.get('show_ai', False):
+                try:
+                    label_font = pygame.font.Font(None, 18)
+                    for enemy in self.enemies:
+                        ex = enemy.rect.centerx - int(self.camera_x) + world_center_x - sw // 2
+                        ey = enemy.rect.top - int(self.camera_y) + world_center_y - sh // 2 - 12
+                        state = None
+                        if hasattr(enemy, 'ai') and hasattr(enemy.ai, 'state'):
+                            s = enemy.ai.state
+                            state = s.name if hasattr(s, 'name') else str(s)
+                        if state is None and hasattr(enemy, 'state'):
+                            state = str(enemy.state)
+                        if state:
+                            txt = label_font.render(state, True, (255, 255, 0))
+                            world_surface.blit(txt, (ex - txt.get_width() // 2, ey))
+                except Exception:
+                    pass
         
-        # 6) Rotate entire world (grid + walls + entities) so player's facing aligns with screen 'up'.
-        # Angle convention: 0°=right, 90°=down, 180°=left, 270°=up.
-        # If rotation feels reversed, flip direction by using (camera_angle - 270).
-        # Note: Both keep the player roughly stabilized at center; choose based on feel.
-    # Use smoothed angle to reduce jitter
-        rotated_surface = pygame.transform.rotozoom(world_surface, self.camera_angle_smooth - 270, 1.0)
-        rotated_rect = rotated_surface.get_rect(center=(sw // 2, sh // 2))
-        screen.blit(rotated_surface, rotated_rect)
+        # 5) Player will be drawn as an overlay after rotating the world, so skip drawing here
         
-        # UI (not rotated, stays on screen)
-        if self.game_ui:
-            self.game_ui.draw()
-        if self.inventory_ui:
-            self.inventory_ui.draw()
+        # 6) Present using GPU renderer if enabled, else CPU rotate+blit
+        if getattr(self, 'use_gpu', False):
+            # Draw UI first (onto UI surface)
+            if self.game_ui:
+                self.game_ui.draw()
+            if self.inventory_ui:
+                self.inventory_ui.draw()
+
+            # Upload world and draw rotated with 1.5x zoom
+            angle_gpu = self.camera_angle_smooth - 270
+            world_tex = SDLTexture.from_surface(self.renderer, world_surface)
+            # Scale up by 1.5x and center
+            zoomed_w, zoomed_h = int(sw * 1.5), int(sh * 1.5)
+            offset_x, offset_y = (sw - zoomed_w) // 2, (sh - zoomed_h) // 2
+            # draw(srcrect, dstrect, angle, origin, flip_x, flip_y)
+            world_tex.draw(None, (offset_x, offset_y, zoomed_w, zoomed_h), angle_gpu)
+            # Upload UI (unrotated) and present
+            ui_tex = SDLTexture.from_surface(self.renderer, self._ui_surface)
+            ui_tex.draw(None, (0, 0, sw, sh), 0)
+            self.renderer.present()
+            # Clear UI for next frame
+            self._ui_surface.fill((0, 0, 0, 0))
+            return
+        else:
+            # CPU path: rotate entire world surface and blit to screen
+            # 1.5 = 50% zoom in (closer camera)
+            angle = self.camera_angle_smooth - 270
+            
+            # Cache check: only rotate if angle changed by more than 0.5 degrees
+            angle_changed = (self._last_rotation_angle is None or 
+                           abs(angle - self._last_rotation_angle) > 0.5)
+            
+            if angle_changed or self._last_rotated is None:
+                # Use rotozoom for combined rotation + scaling (faster than separate operations)
+                rotated_surface = pygame.transform.rotozoom(world_surface, angle, 1.5)
+                self._last_rotated = rotated_surface
+                self._last_rotation_angle = angle
+            else:
+                rotated_surface = self._last_rotated
+            
+            rotated_rect = rotated_surface.get_rect(center=(sw // 2, sh // 2))
+            screen.blit(rotated_surface, rotated_rect)
+
+            # Draw player overlay in screen space with its own rotation so the body visibly spins
+            if self.player:
+                self._draw_player_overlay(screen)
+            
+            # UI (not rotated, stays on screen)
+            if self.game_ui:
+                self.game_ui.draw()
+            if self.inventory_ui:
+                self.inventory_ui.draw()
+
+        # Debug: on-screen overlays (not rotated)
+        if getattr(self, 'debug_flags', None) and self.debug_flags.get('show_fps', False):
+            try:
+                fps = self.clock.get_fps()
+                info = f"FPS: {fps:.1f}  Angle: {self.camera_angle_smooth:.1f}"
+                font = pygame.font.Font(None, 22)
+                txt = font.render(info, True, (230, 230, 230))
+                screen.blit(txt, (10, 6))
+            except Exception:
+                pass
 
     def _render_pause(self, screen: pygame.Surface):
-        """Render the pause screen."""
-        # Draw a semi-transparent overlay
+        """Render the pause screen, with optional Debug submenu."""
         sw, sh = screen.get_size()
+        # Dark overlay
         overlay = pygame.Surface((sw, sh))
         overlay.fill(config.BLACK)
         overlay.set_alpha(140)
         screen.blit(overlay, (0, 0))
 
-        # Panel
-        panel_w, panel_h = 420, 220
+        # Base panel
+        panel_w, panel_h = 520, 300
         panel_x = (sw - panel_w) // 2
         panel_y = (sh - panel_h) // 2
         panel_rect = pygame.Rect(panel_x, panel_y, panel_w, panel_h)
         pygame.draw.rect(screen, (34, 34, 48), panel_rect)
         pygame.draw.rect(screen, config.WHITE, panel_rect, 2)
 
-        # Title
         title_font = pygame.font.Font(None, 48)
         title = title_font.render("Paused", True, config.WHITE)
-        title_rect = title.get_rect(center=(panel_x + panel_w // 2, panel_y + 48))
+        title_rect = title.get_rect(center=(panel_x + panel_w // 2, panel_y + 40))
         screen.blit(title, title_rect)
+
+        if self.pause_substate == 'debug':
+            self._render_debug_menu(screen, panel_rect)
+            return
 
         # Buttons
         buttons = self._compute_pause_buttons()
-        btn_font = pygame.font.Font(None, 36)
+        btn_font = pygame.font.Font(None, 32)
+        labels = {
+            'resume': 'Resume',
+            'debug': 'Debug',
+            'quit': 'Quit',
+        }
         for name, rect in buttons.items():
-            label = "Resume" if name == 'resume' else "Quit"
-            # Button look
             pygame.draw.rect(screen, (60, 60, 80), rect)
             pygame.draw.rect(screen, config.WHITE, rect, 2)
-            txt = btn_font.render(label, True, config.WHITE)
+            txt = btn_font.render(labels.get(name, name.title()), True, config.WHITE)
             txt_rect = txt.get_rect(center=rect.center)
             screen.blit(txt, txt_rect)
+
+    def _render_debug_menu(self, screen: pygame.Surface, panel_rect: pygame.Rect):
+        """Render a simple debug toggles panel inside pause."""
+        self._debug_ui_rects = {}
+        sw, sh = screen.get_size()
+        px, py, pw, ph = panel_rect
+        font = pygame.font.Font(None, 28)
+        title = font.render("Debug Options", True, config.WHITE)
+        screen.blit(title, (px + 20, py + 80))
+
+        options = [
+            ('show_fps', 'Show FPS'),
+            ('show_collision', 'Show Collision Boxes'),
+            ('show_vision', 'Show Enemy Vision Cones'),
+            ('show_ai', 'Show Enemy AI State'),
+        ]
+        y = py + 120
+        for key, label in options:
+            box = pygame.Rect(px + 24, y, 22, 22)
+            pygame.draw.rect(screen, config.WHITE, box, 2)
+            if self.debug_flags.get(key, False):
+                pygame.draw.line(screen, config.WHITE, (box.left + 4, box.centery), (box.centerx, box.bottom - 4), 2)
+                pygame.draw.line(screen, config.WHITE, (box.centerx, box.bottom - 4), (box.right - 4, box.top + 4), 2)
+            text = font.render(label, True, config.WHITE)
+            screen.blit(text, (box.right + 10, y - 2))
+            self._debug_ui_rects[key] = box
+            y += 36
+
+        # Back button
+        back_rect = pygame.Rect(px + pw - 140, py + ph - 60, 120, 36)
+        pygame.draw.rect(screen, (60, 60, 80), back_rect)
+        pygame.draw.rect(screen, config.WHITE, back_rect, 2)
+        back_txt = pygame.font.Font(None, 28).render("Back", True, config.WHITE)
+        back_txt_rect = back_txt.get_rect(center=back_rect.center)
+        screen.blit(back_txt, back_txt_rect)
+        self._debug_back_rect = back_rect
 
     def _render_game_over(self, screen: pygame.Surface):
         """Render the game over screen."""
@@ -696,20 +1055,20 @@ class Game:
         self._game_over_quit_rect = quit_rect
 
     def _compute_pause_buttons(self):
-        """Compute Resume and Quit button rects relative to current screen size."""
+        """Compute pause menu buttons (Resume, Debug, Quit) based on screen size."""
         sw, sh = self.screen.get_size() if self.screen else (config.SCREEN_WIDTH, config.SCREEN_HEIGHT)
-        panel_w, panel_h = 420, 220
+        panel_w, panel_h = 520, 300
         panel_x = (sw - panel_w) // 2
         panel_y = (sh - panel_h) // 2
-        btn_w, btn_h = 160, 44
-        gap = 24
-        resume_rect = pygame.Rect(panel_x + (panel_w - (btn_w * 2 + gap)) // 2,
-                                  panel_y + panel_h - 80,
-                                  btn_w, btn_h)
-        quit_rect = pygame.Rect(resume_rect.right + gap,
-                                 resume_rect.top,
-                                 btn_w, btn_h)
-        return {'resume': resume_rect, 'quit': quit_rect}
+        btn_w, btn_h = 150, 44
+        gap = 20
+        total_w = btn_w * 3 + gap * 2
+        start_x = panel_x + (panel_w - total_w) // 2
+        y = panel_y + panel_h - 80
+        resume_rect = pygame.Rect(start_x, y, btn_w, btn_h)
+        debug_rect = pygame.Rect(start_x + btn_w + gap, y, btn_w, btn_h)
+        quit_rect = pygame.Rect(start_x + (btn_w + gap) * 2, y, btn_w, btn_h)
+        return {'resume': resume_rect, 'debug': debug_rect, 'quit': quit_rect}
 
     def cleanup(self):
         """Cleanup resources before exiting."""
@@ -724,3 +1083,24 @@ class Game:
             self.logger.info("Pygame cleanup completed")
         except Exception as e:
             self.logger.error(f"Error during cleanup: {e}")
+
+    def _draw_player_overlay(self, screen: pygame.Surface):
+        """Draw the player on a separate surface, rotate it, and blit centered on screen."""
+        if not self.player:
+            return
+        sw, sh = screen.get_size()
+
+        # Create a temporary surface to render the player body
+        pad = 8
+        ps = max(self.player.size + pad * 2, 64)
+        player_surf = pygame.Surface((ps, ps), pygame.SRCALPHA)
+
+        # Temporarily center the player's rect on this surface, draw, then restore
+        old_center = self.player.rect.center
+        self.player.rect.center = (ps // 2, ps // 2)
+        self.player.draw(player_surf)
+        self.player.rect.center = old_center
+
+        # Do NOT rotate the player overlay. Player should always face up relative to screen.
+        rrect = player_surf.get_rect(center=(sw // 2, sh // 2))
+        screen.blit(player_surf, rrect)

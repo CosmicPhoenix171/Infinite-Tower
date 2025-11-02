@@ -44,13 +44,14 @@ def main():
         
         # Create the game instance
         game = Game()
-        
-        # Start the game
-        game.start()
+
+        # Enter main loop in menu state (show main menu first)
+        # Leave current_state as default 'menu' and just mark running
+        game.is_running = True
         
         # Main game loop
         clock = pygame.time.Clock()
-        while game.is_running:
+        while game.is_running or game.current_state in ("paused", "menu", "game_over"):
             # Handle events
             game.handle_events()
             
@@ -58,9 +59,9 @@ def main():
             dt = clock.tick(config.FRAME_RATE) / 1000.0
             game.update(dt)
             
-            # Render the frame
+            # Render the frame (including menu/pause screens)
+            game.render(game.screen if game.screen else None)
             if game.screen:
-                game.render(game.screen)
                 pygame.display.flip()
             
     except Exception as e:

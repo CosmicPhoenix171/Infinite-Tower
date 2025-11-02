@@ -18,6 +18,10 @@ TITLE = "Infinite Tower Engine"
 FULLSCREEN = False
 DEBUG_MODE = True
 
+# GPU Rendering (optional)
+USE_GPU_RENDERER = True    # Set True to use pygame._sdl2 Renderer/Texture path (much faster rotation)
+GPU_VSYNC = True           # Attempt vsync when GPU path is enabled
+
 # Colors (RGB tuples)
 BACKGROUND_COLOR = (0, 0, 0)
 WHITE = (255, 255, 255)
@@ -34,7 +38,9 @@ PLAYER_SPEED = 50  # Base movement speed
 # Enemy Settings
 ENEMY_SPAWN_RATE = 1.0
 ENEMY_HEALTH = 50
-ENEMY_SPEED = 2
+# Pixels per second. Player is 50; enemies should be visible and threatening.
+# Types apply multipliers (e.g., TANK ~0.6x, FAST ~1.5x). Base of 60 works well.
+ENEMY_SPEED = 60
 
 # Loot Settings
 LOOT_DROP_RATE = 0.1
@@ -72,6 +78,8 @@ MAX_VELOCITY = 10.0
 AI_UPDATE_FREQUENCY = 1  # Updates per frame
 AI_DETECTION_RANGE = 200
 AI_ATTACK_RANGE = 50
+# How far ahead (in pixels) idle enemies probe for walls to turn around
+AI_IDLE_AVOID_PROBE = 32
 
 # Game Settings
 STARTING_FLOOR = 1

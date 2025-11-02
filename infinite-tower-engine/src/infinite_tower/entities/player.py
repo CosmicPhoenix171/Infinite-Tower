@@ -5,10 +5,11 @@ Copyright (c) 2025 CosmicPhoenix171. All Rights Reserved.
 """
 
 import pygame
+import os
 from typing import Tuple, List, Optional
 from ..config import (
     PLAYER_HEALTH, PLAYER_SPEED, SCREEN_WIDTH, SCREEN_HEIGHT,
-    GREEN, WHITE, RED
+    GREEN, WHITE, RED, SPRITES_PATH
 )
 
 
@@ -39,8 +40,18 @@ class Player:
         self.speed = PLAYER_SPEED
         self.sprint_multiplier = 3.5  # Sprint is 3.5x normal speed
         self.is_sprinting = False
-        self.size = 32  # Player sprite size
+        self.size = 48  # Player sprite size (increased from 32 for better visibility with zoom)
         self.inventory = []
+        
+        # Sprite animation
+        self.sprite_sheet = None
+        self.sprite_frames = []  # [idle1, idle2, walk1, walk2]
+        self.frame_width = 268  # Width of each frame (536/2 columns)
+        self.frame_height = 317  # Height of each frame (635/2 rows)
+        self.current_frame = 0
+        self.animation_timer = 0
+        self.animation_speed = 8  # Frames between sprite changes
+        self._load_sprites()
         
         # Stamina system
         self.stamina = 100
@@ -65,6 +76,47 @@ class Player:
             self.size,
             self.size
         )
+    
+    def _load_sprites(self):
+        """Load and split the player sprite sheet into individual frames."""
+        try:
+            # Get the absolute path to the sprites directory
+            # Go up from entities -> infinite_tower -> src -> infinite-tower-engine -> assets/sprites
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            engine_root = os.path.dirname(os.path.dirname(os.path.dirname(current_dir)))
+            sprite_path = os.path.join(engine_root, "assets", "sprites", "player_spritesheet.png")
+            
+            print(f"[DEBUG] Looking for sprite at: {sprite_path}")
+            print(f"[DEBUG] File exists: {os.path.exists(sprite_path)}")
+            
+            if os.path.exists(sprite_path):
+                self.sprite_sheet = pygame.image.load(sprite_path).convert_alpha()
+                print(f"[DEBUG] Sprite sheet loaded, size: {self.sprite_sheet.get_size()}")
+                
+                # Extract 4 frames from 2x2 grid
+                # Top row (y=0): idle1 (x=0), idle2 (x=268)
+                # Bottom row (y=317): walk1 (x=0), walk2 (x=268)
+                positions = [
+                    (0, 0),          # Frame 0: idle1 (top-left)
+                    (268, 0),        # Frame 1: idle2 (top-right)
+                    (0, 317),        # Frame 2: walk1 (bottom-left)
+                    (268, 317),      # Frame 3: walk2 (bottom-right)
+                ]
+                
+                for x, y in positions:
+                    frame = self.sprite_sheet.subsurface(
+                        pygame.Rect(x, y, self.frame_width, self.frame_height)
+                    )
+                    # Scale to match player size
+                    scaled_frame = pygame.transform.scale(frame, (self.size, self.size))
+                    self.sprite_frames.append(scaled_frame)
+                print(f"[DEBUG] Loaded {len(self.sprite_frames)} sprite frames")
+            else:
+                print(f"[DEBUG] Sprite file not found at {sprite_path}")
+        except (pygame.error, FileNotFoundError) as e:
+            # Sprite sheet not found or invalid, will use fallback rendering
+            print(f"[DEBUG] Error loading sprite: {e}")
+            self.sprite_frames = []
 
     def handle_input(self, input_handler):
         """
@@ -91,14 +143,20 @@ class Player:
         if not hasattr(self, 'direction_angle'):
             self.direction_angle = 0
         
+        # Determine forward/backward first so we can flip rotation when moving backward
+        is_forward = (input_handler.get_key(pygame.K_w) or input_handler.get_key(pygame.K_UP))
+        is_backward = (input_handler.get_key(pygame.K_s) or input_handler.get_key(pygame.K_DOWN))
+        forward_tmp = 1 if is_forward else (-1 if is_backward else 0)
+
         # ROTATION INPUT: A/Left = Rotate Left, D/Right = Rotate Right
-        # Rotation speed in degrees per frame
+        # When moving backward (S), flip A/D so steering reverses (tank controls)
         rotation_speed = 5  # degrees per frame
+        rot_sign = -1 if forward_tmp == -1 else 1
         
         if input_handler.get_key(pygame.K_a) or input_handler.get_key(pygame.K_LEFT):
-            self.direction_angle -= rotation_speed  # Rotate left (counter-clockwise)
+            self.direction_angle -= rotation_speed * rot_sign
         if input_handler.get_key(pygame.K_d) or input_handler.get_key(pygame.K_RIGHT):
-            self.direction_angle += rotation_speed  # Rotate right (clockwise)
+            self.direction_angle += rotation_speed * rot_sign
         
         # Keep angle in 0-360 range
         self.direction_angle = self.direction_angle % 360
@@ -123,12 +181,7 @@ class Player:
             self.direction = "up-right"
         
         # MOVEMENT INPUT: W/Up = Forward, S/Down = Backward
-        forward = 0
-        
-        if input_handler.get_key(pygame.K_w) or input_handler.get_key(pygame.K_UP):
-            forward = 1  # Move forward
-        if input_handler.get_key(pygame.K_s) or input_handler.get_key(pygame.K_DOWN):
-            forward = -1  # Move backward
+        forward = forward_tmp
         
         # Calculate velocity based on facing angle and forward input
         if forward != 0:
@@ -142,8 +195,8 @@ class Player:
             self.velocity = [0.0, 0.0]
             self.is_moving = False
         
-        # Attack input (Left Mouse Button)
-        if input_handler.get_mouse_button(1) and self.attack_cooldown == 0:
+        # Attack input (Left Mouse Button). get_mouse_button(0) == left in pygame.get_pressed()
+        if input_handler.get_mouse_button(0) and self.attack_cooldown == 0:
             self.is_attacking = True
             self.attack_cooldown = self.attack_cooldown_time
 
@@ -155,6 +208,9 @@ class Player:
             dt: Delta time for frame-rate independent movement
             bounds: (min_x, min_y, max_x, max_y) boundary constraints
         """
+        # Update sprite animation
+        self._update_animation()
+        
         # Update position
         self.position[0] += self.velocity[0] * dt
         self.position[1] += self.velocity[1] * dt
@@ -336,39 +392,69 @@ class Player:
                 attack_range
             )
 
+    def _update_animation(self):
+        """Update sprite animation frames."""
+        if not self.sprite_frames:
+            return
+        
+        self.animation_timer += 1
+        if self.animation_timer >= self.animation_speed:
+            self.animation_timer = 0
+            if self.is_moving:
+                # Alternate between walk frames (frames 2 and 3)
+                if self.current_frame in [0, 1]:
+                    self.current_frame = 2
+                elif self.current_frame == 2:
+                    self.current_frame = 3
+                else:  # current_frame == 3
+                    self.current_frame = 2
+            else:
+                # Alternate between idle frames (frames 0 and 1)
+                if self.current_frame in [2, 3]:
+                    self.current_frame = 0
+                elif self.current_frame == 0:
+                    self.current_frame = 1
+                else:  # current_frame == 1
+                    self.current_frame = 0
+
     def draw(self, surface: pygame.Surface):
         """
-        Draw the player on the screen with rotation based on direction_angle.
+        Draw the player on the screen with sprite animation.
+        Player always faces upward in screen space while world rotates.
         
         Args:
             surface: Pygame surface to draw on
         """
         import math
         
-        # Draw player body (green square for now - will be replaced with sprite)
-        pygame.draw.rect(surface, GREEN, self.rect)
-        
-        # Since the world rotates around the player, the player always faces "up" on screen
-        # Draw a simple arrow/triangle shape pointing up to show this
         center_x, center_y = self.rect.center
         
-        # Draw a triangle pointing upward (player's facing direction in screen space)
-        half_size = self.size // 2
-        points = [
-            (center_x, center_y - half_size),  # Top point (forward)
-            (center_x - half_size // 2, center_y + half_size // 2),  # Bottom left
-            (center_x + half_size // 2, center_y + half_size // 2),  # Bottom right
-        ]
-        pygame.draw.polygon(surface, (0, 200, 0), points)
-        pygame.draw.polygon(surface, WHITE, points, 2)
+        # Draw sprite if loaded, otherwise fallback to colored shapes
+        if self.sprite_frames:
+            # Get current animation frame
+            sprite = self.sprite_frames[self.current_frame]
+            # Center the sprite on player position
+            sprite_rect = sprite.get_rect(center=(center_x, center_y))
+            surface.blit(sprite, sprite_rect)
+        else:
+            # Fallback: Draw player body (green square)
+            pygame.draw.rect(surface, GREEN, self.rect)
+            
+            # Draw a triangle pointing upward (player's facing direction in screen space)
+            half_size = self.size // 2
+            points = [
+                (center_x, center_y - half_size),  # Top point (forward)
+                (center_x - half_size // 2, center_y + half_size // 2),  # Bottom left
+                (center_x + half_size // 2, center_y + half_size // 2),  # Bottom right
+            ]
+            pygame.draw.polygon(surface, (0, 200, 0), points)
+            pygame.draw.polygon(surface, WHITE, points, 2)
+            
+            # Draw a small dot at center
+            pygame.draw.circle(surface, WHITE, (center_x, center_y), 3)
         
-        # Draw a small dot at center
-        pygame.draw.circle(surface, WHITE, (center_x, center_y), 3)
-        
-        # Draw attack hitbox when attacking (debug visualization)
-        if self.is_attacking:
-            attack_rect = self.get_attack_rect()
-            pygame.draw.rect(surface, RED, attack_rect, 2)
+        # Note: attack hitbox visualization is drawn by the Game renderer on the world surface
+        # so it aligns with world rotation. We don't draw it here to avoid mismatch.
         
         # Draw health bar above player
         health_bar_width = self.size

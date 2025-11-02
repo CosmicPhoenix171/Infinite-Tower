@@ -6,10 +6,12 @@ Copyright (c) 2025 CosmicPhoenix171. All Rights Reserved.
 
 import pygame
 import random
-from typing import Tuple, Optional
+import math
+from typing import Tuple, Optional, List
 from enum import Enum
 from ..systems.ai import AI, AIBehaviorType
 from ..config import RED, WHITE, BLACK, SCREEN_WIDTH, SCREEN_HEIGHT
+from ..systems.physics import Physics
 
 
 class EnemyType(Enum):
@@ -56,6 +58,13 @@ class Enemy:
         self.size = 28
         self.color = self._get_color_for_type()
         self.direction = "down"
+        # 360° facing and movement like the player
+        self.direction_angle = 0.0  # degrees, 0=right, 90=down, 180=left, 270=up
+        self.velocity = [0.0, 0.0]
+        self.rotation_speed = 5.0  # degrees per frame
+        # Intent set by AI each frame
+        self._desired_angle = 0.0
+        self._move_intent = 0  # -1 back, 0 idle, +1 forward
         self.is_attacking = False
         
         # Combat stats
@@ -143,7 +152,7 @@ class Enemy:
         self.rect.width = self.size
         self.rect.height = self.size
     
-    def update(self, player, dt: float = 1.0, obstacles: Optional[list] = None):
+    def update(self, player, dt: float = 1.0, obstacles: Optional[list] = None, bounds: Optional[tuple[int,int,int,int]] = None):
         """
         Update enemy state and AI.
         
@@ -155,17 +164,53 @@ class Enemy:
         if not self.is_alive():
             return
         
-        # Update AI
+        # Update AI (sets desired angle and move intent)
         self.ai.update(player, obstacles)
+
+        # Rotate toward desired angle (shortest arc)
+        diff = (self._desired_angle - self.direction_angle + 540) % 360 - 180
+        if diff > 0:
+            self.direction_angle += min(self.rotation_speed, diff)
+        else:
+            self.direction_angle += max(-self.rotation_speed, diff)
+        self.direction_angle %= 360
+
+        # Update movement based on facing and intent
+        if self._move_intent != 0:
+            ang = math.radians(self.direction_angle)
+            self.velocity[0] = math.cos(ang) * self.speed * self._move_intent
+            self.velocity[1] = math.sin(ang) * self.speed * self._move_intent
+        else:
+            self.velocity[0] = 0.0
+            self.velocity[1] = 0.0
+        
+        # Apply movement
+        self.position[0] += self.velocity[0] * dt
+        self.position[1] += self.velocity[1] * dt
         
         # Update collision rect
         self.rect.x = int(self.position[0] - self.size // 2)
         self.rect.y = int(self.position[1] - self.size // 2)
         
-        # Keep within bounds
+        # Keep within bounds (world bounds preferred, screen as fallback)
         half_size = self.size // 2
-        self.position[0] = max(half_size, min(self.position[0], SCREEN_WIDTH - half_size))
-        self.position[1] = max(half_size, min(self.position[1], SCREEN_HEIGHT - half_size))
+        if bounds:
+            min_x, min_y, max_x, max_y = bounds
+            self.position[0] = max(min_x + half_size, min(self.position[0], max_x - half_size))
+            self.position[1] = max(min_y + half_size, min(self.position[1], max_y - half_size))
+        else:
+            self.position[0] = max(half_size, min(self.position[0], SCREEN_WIDTH - half_size))
+            self.position[1] = max(half_size, min(self.position[1], SCREEN_HEIGHT - half_size))
+        # Sync rect after bounds clamp
+        self.rect.x = int(self.position[0] - self.size // 2)
+        self.rect.y = int(self.position[1] - self.size // 2)
+        
+        # Resolve collisions against static obstacles (e.g., walls)
+        if obstacles:
+            self._resolve_wall_collisions(obstacles)
+            # Sync logical position to rect center after resolution
+            self.position[0] = self.rect.centerx
+            self.position[1] = self.rect.centery
         
         # Update attack cooldown
         if self.attack_cooldown > 0:
@@ -174,6 +219,28 @@ class Enemy:
         # Reset attack flag
         if self.attack_cooldown == 0:
             self.is_attacking = False
+
+    def _resolve_wall_collisions(self, obstacles: Optional[List]):
+        """
+        Push the enemy out of any overlapping wall/obstacle using minimal overlap.
+        Accepts a list of Wall objects or pygame.Rects.
+        """
+        if not obstacles:
+            return
+        for obj in obstacles:
+            wall_rect = getattr(obj, 'rect', obj)
+            if not isinstance(wall_rect, pygame.Rect):
+                continue
+            if self.rect.colliderect(wall_rect):
+                side = Physics.get_collision_side(self.rect, wall_rect, (0, 0))
+                if side == "left":
+                    self.rect.right = wall_rect.left
+                elif side == "right":
+                    self.rect.left = wall_rect.right
+                elif side == "top":
+                    self.rect.bottom = wall_rect.top
+                elif side == "bottom":
+                    self.rect.top = wall_rect.bottom
     
     def move(self, direction: str):
         """
@@ -228,41 +295,66 @@ class Enemy:
         return self.health > 0
     
     def get_attack_rect(self) -> pygame.Rect:
-        """
-        Get attack hitbox based on direction.
-        
-        Returns:
-            Attack rectangle
-        """
+        """Get attack hitbox using 8-direction logic based on direction_angle."""
+        attack_range = 40
         attack_width = 30
+        angle = self.direction_angle % 360
         
-        if self.direction == "up":
+        if angle < 22.5 or angle >= 337.5:
             return pygame.Rect(
-                self.rect.centerx - attack_width // 2,
-                self.rect.top - self.attack_range,
+                self.rect.right,
+                self.rect.centery - attack_width // 2,
+                attack_range,
                 attack_width,
-                self.attack_range
             )
-        elif self.direction == "down":
+        elif 22.5 <= angle < 67.5:
+            return pygame.Rect(
+                self.rect.right - attack_width // 2,
+                self.rect.bottom - attack_width // 2,
+                attack_range,
+                attack_range,
+            )
+        elif 67.5 <= angle < 112.5:
             return pygame.Rect(
                 self.rect.centerx - attack_width // 2,
                 self.rect.bottom,
                 attack_width,
-                self.attack_range
+                attack_range,
             )
-        elif self.direction == "left":
+        elif 112.5 <= angle < 157.5:
             return pygame.Rect(
-                self.rect.left - self.attack_range,
-                self.rect.centery - attack_width // 2,
-                self.attack_range,
-                attack_width
+                self.rect.left - attack_range + attack_width // 2,
+                self.rect.bottom - attack_width // 2,
+                attack_range,
+                attack_range,
             )
-        else:  # right
+        elif 157.5 <= angle < 202.5:
             return pygame.Rect(
-                self.rect.right,
+                self.rect.left - attack_range,
                 self.rect.centery - attack_width // 2,
-                self.attack_range,
-                attack_width
+                attack_range,
+                attack_width,
+            )
+        elif 202.5 <= angle < 247.5:
+            return pygame.Rect(
+                self.rect.left - attack_range + attack_width // 2,
+                self.rect.top - attack_range + attack_width // 2,
+                attack_range,
+                attack_range,
+            )
+        elif 247.5 <= angle < 292.5:
+            return pygame.Rect(
+                self.rect.centerx - attack_width // 2,
+                self.rect.top - attack_range,
+                attack_width,
+                attack_range,
+            )
+        else:
+            return pygame.Rect(
+                self.rect.right - attack_width // 2,
+                self.rect.top - attack_range + attack_width // 2,
+                attack_range,
+                attack_range,
             )
     
     def draw(self, surface: pygame.Surface):
@@ -279,18 +371,13 @@ class Enemy:
         border_color = WHITE if not self.is_attacking else RED
         pygame.draw.rect(surface, border_color, self.rect, 2)
         
-        # Draw direction indicator
+        # Draw direction indicator using direction_angle
         center_x, center_y = self.rect.center
         indicator_length = 12
-        
-        if self.direction == "up":
-            end_pos = (center_x, center_y - indicator_length)
-        elif self.direction == "down":
-            end_pos = (center_x, center_y + indicator_length)
-        elif self.direction == "left":
-            end_pos = (center_x - indicator_length, center_y)
-        else:  # right
-            end_pos = (center_x + indicator_length, center_y)
+        end_pos = (
+            int(center_x + math.cos(math.radians(self.direction_angle)) * indicator_length),
+            int(center_y + math.sin(math.radians(self.direction_angle)) * indicator_length),
+        )
         
         pygame.draw.line(surface, BLACK, (center_x, center_y), end_pos, 2)
         
