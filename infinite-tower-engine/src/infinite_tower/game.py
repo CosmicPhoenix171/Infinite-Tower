@@ -43,6 +43,7 @@ class Game:
                 pygame.display.set_mode((1, 1))  # Minimal display to enable Surface creation
                 # Create SDL2 Window/Renderer; no classic display surface
                 self.window = SDLWindow(config.TITLE, size=(config.SCREEN_WIDTH, config.SCREEN_HEIGHT), resizable=True)
+                self.window.show()
                 self.renderer = SDLRenderer(self.window, vsync=getattr(config, 'GPU_VSYNC', True))
                 self.screen = None
                 # UI overlay surface (drawn unrotated)
@@ -145,10 +146,20 @@ class Game:
         if not self.player:
             return
 
-        sw, sh = self.screen.get_size()
+        # Get screen size - from window in GPU mode, from surface in CPU mode
+        if getattr(self, 'use_gpu', False):
+            sw, sh = self.window.size
+        else:
+            sw, sh = self.screen.get_size()
+        
         # Center camera on player position
         self.camera_x = self.player.position[0] - sw // 2
         self.camera_y = self.player.position[1] - sh // 2
+        
+        # Debug camera calc
+        if not hasattr(self, '_camera_debug'):
+            print(f"[CAMERA DEBUG] sw={sw}, sh={sh}, player_pos={self.player.position}, camera=({self.camera_x}, {self.camera_y})")
+            self._camera_debug = True
 
         # Target player's current angle
         target = getattr(self.player, 'direction_angle', 0) % 360
@@ -156,7 +167,7 @@ class Game:
         # Smoothly interpolate angle across wrap-around (shortest arc)
         # Normalize difference to [-180, 180]
         diff = (target - self.camera_angle_smooth + 540) % 360 - 180
-        smoothing = 0.25  # 0..1, higher = snappier (increased from 0.15 for more responsive feel)
+        smoothing = 100  # 0..1, lower = smoother/slower, higher = snappier (0.18 for faster turning with smoothness)
         self.camera_angle_smooth = (self.camera_angle_smooth + diff * smoothing) % 360
         self.camera_angle = target
 
@@ -215,12 +226,6 @@ class Game:
                 elif event.key == pygame.K_TAB or event.key == pygame.K_i or event.key == pygame.K_o:
                     if self.inventory_ui:
                         self.inventory_ui.toggle()
-                elif event.key == pygame.K_f:
-                    # Optional fullscreen toggle
-                    try:
-                        pygame.display.toggle_fullscreen()
-                    except Exception:
-                        pass
                 elif event.key == pygame.K_RETURN:
                     # Dismiss dialog if showing
                     if self.game_ui and getattr(self.game_ui, 'current_dialog', None):
@@ -464,6 +469,9 @@ class Game:
         self.inventory_ui = InventoryUI(ui_target, self.player)
         self.game_ui.add_notification("Game Started!", self.game_ui.COLORS['text_green'])
         self.game_ui.add_notification("Welcome to Floor 1", self.game_ui.COLORS['text_yellow'])
+        
+        # Initialize camera to center on player (important for first render frame)
+        self._update_camera()
         
         self.current_state = "playing"
 
@@ -758,13 +766,22 @@ class Game:
         """Render gameplay with grid, walls, and entities all rotating together with player perspective."""
         import math
 
-        sw, sh = screen.get_size()
-
-        # Fill screen background
-        screen.fill((35, 30, 25))
+        # Get screen size - from window in GPU mode, from surface in CPU mode
+        if getattr(self, 'use_gpu', False):
+            sw, sh = self.window.size
+        else:
+            sw, sh = screen.get_size()
+            # Fill screen background
+            screen.fill((35, 30, 25))
 
         # 1) Prepare a world surface for everything (grid, walls, entities - all rotate together)
-        world_size = int(math.hypot(sw, sh)) + 64  # minimal square covering screen when rotated
+        # In GPU mode, cap to a conservative texture size to avoid driver limits (e.g., 1024)
+        diag = int(math.hypot(sw, sh)) + 64  # minimal square covering screen when rotated
+        if getattr(self, 'use_gpu', False):
+            max_tex = 1024
+            world_size = min(diag, max_tex)
+        else:
+            world_size = diag
         if self._world_surface is None or self._world_size != world_size:
             self._world_size = world_size
             self._world_surface = pygame.Surface((world_size, world_size))
@@ -885,26 +902,74 @@ class Game:
                 except Exception:
                     pass
         
-        # 5) Player will be drawn as an overlay after rotating the world, so skip drawing here
+        # 5) Draw player on world surface (centered)
+        if self.player:
+            # Player is always at the center of the world surface in player-relative coordinates
+            player_x = world_center_x - self.player.size // 2
+            player_y = world_center_y - self.player.size // 2
+            
+            # Temporarily adjust player position for drawing
+            original_x = self.player.rect.x
+            original_y = self.player.rect.y
+            self.player.rect.x = player_x
+            self.player.rect.y = player_y
+            self.player.draw(world_surface)
+            self.player.rect.x = original_x
+            self.player.rect.y = original_y
         
         # 6) Present using GPU renderer if enabled, else CPU rotate+blit
         if getattr(self, 'use_gpu', False):
-            # Draw UI first (onto UI surface)
-            if self.game_ui:
-                self.game_ui.draw()
-            if self.inventory_ui:
-                self.inventory_ui.draw()
+            # Clear renderer background
+            self.renderer.draw_color = (35, 30, 25, 255)
+            self.renderer.clear()
 
-            # Upload world and draw rotated with 1.5x zoom
+            # Draw a tiny sanity quad (red square) to ensure renderer output is visible (one-time)
+            if not hasattr(self, '_gpu_sanity_drawn'):
+                try:
+                    test_surf = pygame.Surface((128, 128))
+                    test_surf.fill((220, 40, 40))
+                    test_tex = SDLTexture.from_surface(self.renderer, test_surf)
+                    test_tex.draw(None, (20, 20, 128, 128), 0)
+                    print("[GPU DEBUG] sanity quad drawn")
+                except Exception as _:
+                    print("[GPU DEBUG] sanity quad FAILED")
+                self._gpu_sanity_drawn = True
+
+            # Upload world and draw rotated with 1.5x zoom (draw world BEFORE UI)
             angle_gpu = self.camera_angle_smooth - 270
+            
+            # Debug: print world surface info
+            if not hasattr(self, '_debug_printed'):
+                print(f"[GPU DEBUG] World surface size: {world_surface.get_size()}")
+                print(f"[GPU DEBUG] Screen size: {sw}x{sh}")
+                print(f"[GPU DEBUG] Player position: {self.player.position if self.player else 'None'}")
+                print(f"[GPU DEBUG] Camera: ({self.camera_x}, {self.camera_y})")
+                print(f"[GPU DEBUG] Enemies count: {len(self.enemies)}")
+                print(f"[GPU DEBUG] Walls count: {len(self.walls) if self.walls else 0}")
+                # Save world surface to file for inspection
+                try:
+                    pygame.image.save(world_surface, "debug_world_surface.png")
+                    print("[GPU DEBUG] Saved world surface to debug_world_surface.png")
+                except:
+                    pass
+                self._debug_printed = True
+            
             world_tex = SDLTexture.from_surface(self.renderer, world_surface)
+            world_tex.blend_mode = 1  # Enable alpha blending for world texture
             # Scale up by 1.5x and center
             zoomed_w, zoomed_h = int(sw * 1.5), int(sh * 1.5)
             offset_x, offset_y = (sw - zoomed_w) // 2, (sh - zoomed_h) // 2
             # draw(srcrect, dstrect, angle, origin, flip_x, flip_y)
             world_tex.draw(None, (offset_x, offset_y, zoomed_w, zoomed_h), angle_gpu)
-            # Upload UI (unrotated) and present
+
+            # Draw UI (onto UI surface first)
+            if self.game_ui:
+                self.game_ui.draw()
+            if self.inventory_ui:
+                self.inventory_ui.draw()
+            # Upload UI (unrotated) with alpha blending and present
             ui_tex = SDLTexture.from_surface(self.renderer, self._ui_surface)
+            ui_tex.blend_mode = 1  # SDL_BLENDMODE_BLEND for alpha transparency
             ui_tex.draw(None, (0, 0, sw, sh), 0)
             self.renderer.present()
             # Clear UI for next frame
@@ -915,25 +980,12 @@ class Game:
             # 1.5 = 50% zoom in (closer camera)
             angle = self.camera_angle_smooth - 270
             
-            # Cache check: only rotate if angle changed by more than 0.5 degrees
-            angle_changed = (self._last_rotation_angle is None or 
-                           abs(angle - self._last_rotation_angle) > 0.5)
-            
-            if angle_changed or self._last_rotated is None:
-                # Use rotozoom for combined rotation + scaling (faster than separate operations)
-                rotated_surface = pygame.transform.rotozoom(world_surface, angle, 1.5)
-                self._last_rotated = rotated_surface
-                self._last_rotation_angle = angle
-            else:
-                rotated_surface = self._last_rotated
+            # Always rotate (no caching) to ensure enemies/player movement is visible
+            rotated_surface = pygame.transform.rotozoom(world_surface, angle, 1.5)
             
             rotated_rect = rotated_surface.get_rect(center=(sw // 2, sh // 2))
             screen.blit(rotated_surface, rotated_rect)
 
-            # Draw player overlay in screen space with its own rotation so the body visibly spins
-            if self.player:
-                self._draw_player_overlay(screen)
-            
             # UI (not rotated, stays on screen)
             if self.game_ui:
                 self.game_ui.draw()
@@ -1056,7 +1108,13 @@ class Game:
 
     def _compute_pause_buttons(self):
         """Compute pause menu buttons (Resume, Debug, Quit) based on screen size."""
-        sw, sh = self.screen.get_size() if self.screen else (config.SCREEN_WIDTH, config.SCREEN_HEIGHT)
+        # Get screen size - from window in GPU mode, from surface in CPU mode
+        if getattr(self, 'use_gpu', False) and hasattr(self, 'window'):
+            sw, sh = self.window.size
+        elif self.screen:
+            sw, sh = self.screen.get_size()
+        else:
+            sw, sh = (config.SCREEN_WIDTH, config.SCREEN_HEIGHT)
         panel_w, panel_h = 520, 300
         panel_x = (sw - panel_w) // 2
         panel_y = (sh - panel_h) // 2

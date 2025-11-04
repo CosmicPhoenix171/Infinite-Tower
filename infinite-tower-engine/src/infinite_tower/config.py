@@ -19,7 +19,7 @@ FULLSCREEN = False
 DEBUG_MODE = True
 
 # GPU Rendering (optional)
-USE_GPU_RENDERER = True    # Set True to use pygame._sdl2 Renderer/Texture path (much faster rotation)
+USE_GPU_RENDERER = False    # Set True to use pygame._sdl2 Renderer/Texture path (much faster rotation)
 GPU_VSYNC = True           # Attempt vsync when GPU path is enabled
 
 # Colors (RGB tuples)
